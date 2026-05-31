@@ -29,6 +29,8 @@ jobs:
       RELEASE_TAG: ${{ github.ref_name }}
       # GitHub runners lack FUSE; make linuxdeploy/AppImage tooling extract-and-run.
       APPIMAGE_EXTRACT_AND_RUN: 1
+      # Exposed at job level so steps can skip Apple signing when no cert is configured.
+      APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -101,7 +103,7 @@ jobs:
           fi
 
       - name: Import Apple Developer Certificate
-        if: runner.os == 'macOS'
+        if: runner.os == 'macOS' && env.APPLE_CERTIFICATE != ''
         env:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}

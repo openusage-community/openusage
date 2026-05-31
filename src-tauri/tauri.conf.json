@@ -61,9 +61,9 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDU2Njk4QTU0MDMzMEY5MTkKUldRWitUQURWSXBwVnFTY1FBWitxNlpaQnB5S3RVWW1qWHJ3NlRuZ2p3c2hPVzNTa3BUR0V0SXkK",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IERFNEFDMEUzODgyQUJCQTgKUldTb3V5cUk0OEJLM2dKK2JVTVlBd2JvdDJyS3ZwSXhaK0xKMk51eGtCV29CVnNwMTdtdUxXYnIK",
       "endpoints": [
-        "https://github.com/robinebers/openusage/releases/latest/download/latest.json"
+        "https://github.com/symonbaikov/openusage/releases/latest/download/latest.json"
       ]
     }
   }
