@@ -18,6 +18,41 @@ The app auto-updates. Install once and you're set.
 > Wayland). Reading credentials stored in the system keyring requires
 > `secret-tool` (the `libsecret`/`libsecret-tools` package).
 
+## Install on Linux
+
+Grab the asset for your distro from the
+[latest release](https://github.com/symonbaikov/openusage/releases/latest)
+(replace the version in the examples below if a newer one is out).
+
+**Fedora / RHEL (.rpm)** — `dnf` pulls in the dependencies automatically:
+
+```sh
+sudo dnf install https://github.com/symonbaikov/openusage/releases/download/v0.6.24/OpenUsage-0.6.24-1.x86_64.rpm
+```
+
+**Debian / Ubuntu (.deb):**
+
+```sh
+curl -LO https://github.com/symonbaikov/openusage/releases/download/v0.6.24/OpenUsage_0.6.24_amd64.deb
+sudo apt install ./OpenUsage_0.6.24_amd64.deb
+```
+
+**Any distro (AppImage)** — portable, no install:
+
+```sh
+curl -L -o OpenUsage.AppImage https://github.com/symonbaikov/openusage/releases/download/v0.6.24/OpenUsage_0.6.24_amd64.AppImage
+chmod +x OpenUsage.AppImage
+./OpenUsage.AppImage
+```
+
+After installing via `.rpm`/`.deb`, launch **OpenUsage** from your app menu — it
+starts in the system tray. If your desktop has no tray (e.g. GNOME), install an
+AppIndicator/StatusNotifier extension, or open the panel with the global shortcut.
+
+Runtime dependencies (handled automatically by `.rpm`/`.deb`): `webkit2gtk-4.1`,
+`gtk3`, an AppIndicator library, and — for providers that read the system
+keyring — `secret-tool` (`libsecret-tools` / `libsecret`).
+
 ## What It Does
 
 OpenUsage lives in your menu bar and shows you how much of your AI coding subscriptions you've used. Progress bars, badges, and clear labels. No mental math required.
