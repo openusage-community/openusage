@@ -1,5 +1,40 @@
 # Changelog
 
+## v0.6.25
+
+### New Features
+- Add Linux support by @symonbaikov
+
+### Bug Fixes
+- Fix GNOME anchor patcher test by @symonbaikov
+- Refine plugin engine request handling by @symonbaikov
+- Merge branch 'linux-support' by @symonbaikov
+
+### Chores
+- Run CI on main pushes by @symonbaikov
+- Revise README for OpenUsage Community branding by @symonbaikov
+- Set GitHub Sponsors username to symonbaikov by @symonbaikov
+- Clarify fork status in README by @symonbaikov
+- Add 'Install on Linux' section to README by @symonbaikov
+- Point download link at symonbaikov fork releases by @symonbaikov
+
+---
+
+### Changelog
+
+**Full Changelog**: [v0.6.24...v0.6.25](https://github.com/openusage-community/openusage/compare/v0.6.24...v0.6.25)
+
+- [b0ede86](https://github.com/openusage-community/openusage/commit/b0ede864662913a4bc762bc2a687be23bbd12f35) Fix GNOME anchor patcher test by @symonbaikov
+- [5bb47a3](https://github.com/openusage-community/openusage/commit/5bb47a32dde587695ab8016248a8fd31e8f93521) Run CI on main pushes by @symonbaikov
+- [c2ed08a](https://github.com/openusage-community/openusage/commit/c2ed08a91c3627eb07b6f39b37a623d562a4d00d) Refine plugin engine request handling by @symonbaikov
+- [0766717](https://github.com/openusage-community/openusage/commit/07667171c50abdc867dbcdc2a1bdfd24fa9b028b) Revise README for OpenUsage Community branding by @symonbaikov
+- [ccd47b0](https://github.com/openusage-community/openusage/commit/ccd47b0928071c0eb09f370994df79859ea348d7) Set GitHub Sponsors username to symonbaikov by @symonbaikov
+- [4ff0ed6](https://github.com/openusage-community/openusage/commit/4ff0ed660032bd34324a3c9693e6d2068e87069b) Clarify fork status in README by @symonbaikov
+- [f4d7262](https://github.com/openusage-community/openusage/commit/f4d72626cf979856930edae7124b13667df5bc8a) Merge branch 'linux-support' by @symonbaikov
+- [e3becbd](https://github.com/openusage-community/openusage/commit/e3becbda53414b9ff759408a95ef54f760dcafef) Add Linux support by @symonbaikov
+- [5231116](https://github.com/openusage-community/openusage/commit/5231116a741b6c81c46f06eb76e5d8e24f336c30) Add 'Install on Linux' section to README by @symonbaikov
+- [8e24855](https://github.com/openusage-community/openusage/commit/8e24855a56e696529111102d5629644d5b9a7da1) Point download link at symonbaikov fork releases by @symonbaikov
+
 ## v0.6.24
 
 ### New Features
