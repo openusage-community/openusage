@@ -5,7 +5,7 @@ use tauri::tray::{MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_store::StoreExt;
 
-use crate::panel::{show_panel, toggle_panel};
+use crate::panel::{show_panel, toggle_panel_at_tray_icon};
 
 const LOG_LEVEL_STORE_KEY: &str = "logLevel";
 
@@ -135,9 +135,8 @@ pub fn create(app_handle: &AppHandle) -> tauri::Result<()> {
         ],
     )?;
 
-    TrayIconBuilder::with_id("tray")
+    let tray_builder = TrayIconBuilder::with_id("tray")
         .icon(icon)
-        .icon_as_template(true)
         .tooltip("OpenUsage")
         .menu(&menu)
         .show_menu_on_left_click(false)
@@ -181,17 +180,38 @@ pub fn create(app_handle: &AppHandle) -> tauri::Result<()> {
         .on_tray_icon_event(|tray, event| {
             let app_handle = tray.app_handle();
 
-            if let TrayIconEvent::Click { button_state, .. } = event {
+            if let TrayIconEvent::Click {
+                button_state,
+                position,
+                rect,
+                ..
+            } = event
+            {
                 if button_state == MouseButtonState::Up {
+                    log::debug!(
+                        "tray click event: position={:?} rect_position={:?} rect_size={:?}",
+                        position,
+                        rect.position,
+                        rect.size
+                    );
                     // toggle_panel shows/hides and positions under the tray icon.
-                    // Note: on some Linux desktops (e.g. GNOME without an
-                    // AppIndicator extension) left-click does not emit this
-                    // event — use the "Show Stats" menu item or global shortcut.
-                    toggle_panel(app_handle);
+                    // Note: on some Linux desktops without AppIndicator click
+                    // support, left-click does not emit this event; use the
+                    // "Show Stats" menu item or global shortcut.
+                    toggle_panel_at_tray_icon(
+                        app_handle,
+                        position,
+                        rect.position.into(),
+                        rect.size.into(),
+                    );
                 }
             }
-        })
-        .build(app_handle)?;
+        });
+
+    #[cfg(target_os = "macos")]
+    let tray_builder = tray_builder.icon_as_template(true);
+
+    tray_builder.build(app_handle)?;
 
     Ok(())
 }

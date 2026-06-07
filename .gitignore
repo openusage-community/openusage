@@ -11,6 +11,9 @@ node_modules
 dist
 dist-ssr
 *.local
+!src-tauri/resources/gnome-shell/
+!src-tauri/resources/gnome-shell/openusage@sunstory.local/
+!src-tauri/resources/gnome-shell/openusage@sunstory.local/**
 coverage
 tmpcov-gem
 

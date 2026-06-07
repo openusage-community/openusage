@@ -1,9 +1,10 @@
 use super::cache::{cache_state, enabled_snapshots_ordered};
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
+use tauri::AppHandle;
 
 const BIND_ADDR: &str = "127.0.0.1:6736";
 const MAX_CONCURRENT_CONNECTIONS: usize = 16;
@@ -60,8 +61,8 @@ impl Drop for ConnectionPermit {
 // HTTP server
 // ---------------------------------------------------------------------------
 
-pub fn start_server() {
-    std::thread::spawn(|| {
+pub fn start_server(app_handle: AppHandle) {
+    std::thread::spawn(move || {
         let listener = match TcpListener::bind(BIND_ADDR) {
             Ok(l) => {
                 log::info!("local HTTP API listening on {}", BIND_ADDR);
@@ -91,7 +92,8 @@ pub fn start_server() {
                         let _ = stream.flush();
                         continue;
                     };
-                    std::thread::spawn(move || handle_connection(stream, permit));
+                    let app_handle = app_handle.clone();
+                    std::thread::spawn(move || handle_connection(stream, permit, app_handle));
                 }
                 Err(e) => log::debug!("local HTTP API accept error: {}", e),
             }
@@ -99,7 +101,7 @@ pub fn start_server() {
     });
 }
 
-fn handle_connection(mut stream: TcpStream, _permit: ConnectionPermit) {
+fn handle_connection(mut stream: TcpStream, _permit: ConnectionPermit, app_handle: AppHandle) {
     let _ = stream.set_read_timeout(Some(CONNECTION_TIMEOUT));
     let _ = stream.set_write_timeout(Some(CONNECTION_TIMEOUT));
 
@@ -116,6 +118,11 @@ fn handle_connection(mut stream: TcpStream, _permit: ConnectionPermit) {
     let mut parts = first_line.split_whitespace();
     let method = parts.next().unwrap_or("");
     let raw_path = parts.next().unwrap_or("");
+    let body = request
+        .split_once("\r\n\r\n")
+        .map(|(_, body)| body)
+        .or_else(|| request.split_once("\n\n").map(|(_, body)| body))
+        .unwrap_or("");
 
     // Strip query string and trailing slash (but keep root "/v1/usage" intact)
     let path = raw_path.split('?').next().unwrap_or(raw_path);
@@ -125,12 +132,17 @@ fn handle_connection(mut stream: TcpStream, _permit: ConnectionPermit) {
         path
     };
 
-    let response = route(method, path);
+    let response = route_with_body(method, path, body, Some(&app_handle));
     let _ = stream.write_all(response.as_bytes());
     let _ = stream.flush();
 }
 
+#[cfg(test)]
 fn route(method: &str, path: &str) -> String {
+    route_with_body(method, path, "", None)
+}
+
+fn route_with_body(method: &str, path: &str, body: &str, app_handle: Option<&AppHandle>) -> String {
     // Match routes
     if path == "/v1/usage" {
         return match method {
@@ -150,7 +162,81 @@ fn route(method: &str, path: &str) -> String {
         }
     }
 
+    #[cfg(target_os = "linux")]
+    if path == "/v1/linux-panel/open" {
+        return match method {
+            "POST" => handle_post_linux_panel_open(body, app_handle),
+            "OPTIONS" => response_no_content(),
+            _ => response_method_not_allowed(),
+        };
+    }
+
+    #[cfg(target_os = "linux")]
+    if path == "/v1/linux-panel/anchor" {
+        return match method {
+            "POST" => handle_post_linux_panel_anchor(body),
+            "OPTIONS" => response_no_content(),
+            _ => response_method_not_allowed(),
+        };
+    }
+
     response_not_found("not_found")
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct PanelOpenRequest {
+    #[serde(rename = "centerX")]
+    center_x: f64,
+    #[serde(rename = "bottomY")]
+    bottom_y: f64,
+}
+
+fn parse_panel_open_request(body: &str) -> Result<PanelOpenRequest, &'static str> {
+    let request: PanelOpenRequest = serde_json::from_str(body).map_err(|_| "invalid_anchor")?;
+    if !request.center_x.is_finite() || !request.bottom_y.is_finite() {
+        return Err("invalid_anchor");
+    }
+    Ok(request)
+}
+
+#[cfg(target_os = "linux")]
+fn handle_post_linux_panel_open(body: &str, app_handle: Option<&AppHandle>) -> String {
+    let request = match parse_panel_open_request(body) {
+        Ok(request) => request,
+        Err(error_code) => return response_bad_request(error_code),
+    };
+
+    let Some(app_handle) = app_handle else {
+        log::warn!("linux panel open requested before app handle was available");
+        return response_service_unavailable();
+    };
+
+    log::info!(
+        "linux panel open anchor center_x={:.0} bottom_y={:.0}",
+        request.center_x,
+        request.bottom_y
+    );
+    eprintln!(
+        "linux panel open anchor center_x={:.0} bottom_y={:.0}",
+        request.center_x, request.bottom_y
+    );
+    crate::panel::show_panel_at_logical_anchor(app_handle, request.center_x, request.bottom_y);
+    response_no_content()
+}
+
+#[cfg(target_os = "linux")]
+fn handle_post_linux_panel_anchor(body: &str) -> String {
+    let request = match parse_panel_open_request(body) {
+        Ok(request) => request,
+        Err(error_code) => return response_bad_request(error_code),
+    };
+
+    eprintln!(
+        "linux panel remember anchor center_x={:.0} bottom_y={:.0}",
+        request.center_x, request.bottom_y
+    );
+    crate::panel::remember_linux_panel_anchor(request.center_x, request.bottom_y);
+    response_no_content()
 }
 
 fn handle_get_usage_collection() -> String {
@@ -212,6 +298,11 @@ fn response_not_found(error_code: &str) -> String {
     response_json(404, "Not Found", &body)
 }
 
+fn response_bad_request(error_code: &str) -> String {
+    let body = format!(r#"{{"error":"{}"}}"#, error_code);
+    response_json(400, "Bad Request", &body)
+}
+
 fn response_method_not_allowed() -> String {
     let body = r#"{"error":"method_not_allowed"}"#;
     response_json(405, "Method Not Allowed", body)
@@ -224,7 +315,7 @@ fn response_service_unavailable() -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::super::cache::{cache_state, CachedPluginSnapshot};
+    use super::super::cache::{CachedPluginSnapshot, cache_state};
     use super::*;
     use serial_test::serial;
 
@@ -254,6 +345,65 @@ mod tests {
     fn route_post_returns_405() {
         let resp = route("POST", "/v1/usage");
         assert!(resp.starts_with("HTTP/1.1 405"));
+    }
+
+    #[test]
+    fn panel_open_request_accepts_valid_anchor() {
+        let payload = r#"{"centerX":1440,"bottomY":32}"#;
+
+        let request = parse_panel_open_request(payload).expect("valid request");
+
+        assert_eq!(request.center_x, 1440.0);
+        assert_eq!(request.bottom_y, 32.0);
+    }
+
+    #[test]
+    fn panel_open_request_rejects_invalid_anchor() {
+        let payload = r#"{"centerX":null,"bottomY":32}"#;
+
+        let error = parse_panel_open_request(payload).expect_err("invalid request");
+
+        assert_eq!(error, "invalid_anchor");
+    }
+
+    #[test]
+    fn route_panel_open_rejects_invalid_payload() {
+        let resp = route_with_body("POST", "/v1/linux-panel/open", "{}", None);
+
+        assert!(resp.starts_with("HTTP/1.1 400"));
+        assert!(resp.contains(r#""error":"invalid_anchor""#));
+    }
+
+    #[test]
+    fn route_panel_open_requires_app_handle_after_validation() {
+        let resp = route_with_body(
+            "POST",
+            "/v1/linux-panel/open",
+            r#"{"centerX":1440,"bottomY":32}"#,
+            None,
+        );
+
+        assert!(resp.starts_with("HTTP/1.1 503"));
+    }
+
+    #[test]
+    fn route_panel_anchor_accepts_valid_payload() {
+        let resp = route_with_body(
+            "POST",
+            "/v1/linux-panel/anchor",
+            r#"{"centerX":1440,"bottomY":32}"#,
+            None,
+        );
+
+        assert!(resp.starts_with("HTTP/1.1 204"));
+    }
+
+    #[test]
+    fn route_panel_anchor_rejects_invalid_payload() {
+        let resp = route_with_body("POST", "/v1/linux-panel/anchor", "{}", None);
+
+        assert!(resp.starts_with("HTTP/1.1 400"));
+        assert!(resp.contains(r#""error":"invalid_anchor""#));
     }
 
     #[test]

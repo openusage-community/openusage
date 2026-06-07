@@ -27,7 +27,7 @@ vi.mock("@tauri-apps/api/event", () => ({
 vi.mock("@tauri-apps/api/window", () => ({
   getCurrentWindow: getCurrentWindowMock,
   currentMonitor: currentMonitorMock,
-  PhysicalSize: class PhysicalSize {
+  LogicalSize: class LogicalSize {
     width: number
     height: number
 
@@ -75,7 +75,7 @@ describe("usePanel", () => {
     )
 
     await waitFor(() => {
-      expect(listenMock).toHaveBeenCalledTimes(2)
+      expect(listenMock).toHaveBeenCalledTimes(3)
     })
 
     act(() => {
@@ -150,6 +150,37 @@ describe("usePanel", () => {
     await waitFor(() => {
       expect(unlistenShowAbout).toHaveBeenCalledTimes(1)
     })
+  })
+
+  it("updates arrow offset from panel anchor event", async () => {
+    const callbacks = new Map<string, (event: { payload: unknown }) => void>()
+
+    listenMock.mockImplementation(async (event: string, callback: (event: { payload: unknown }) => void) => {
+      callbacks.set(event, callback)
+      return vi.fn()
+    })
+
+    const { result } = renderHook(() =>
+      usePanel({
+        activeView: "home",
+        setActiveView: vi.fn(),
+        showAbout: false,
+        setShowAbout: vi.fn(),
+        displayPlugins: [],
+      })
+    )
+
+    expect(result.current.arrowOffsetPx).toBe(0)
+
+    await waitFor(() => {
+      expect(callbacks.has("panel:anchor-offset")).toBe(true)
+    })
+
+    act(() => {
+      callbacks.get("panel:anchor-offset")?.({ payload: 72 })
+    })
+
+    expect(result.current.arrowOffsetPx).toBe(72)
   })
 
   it("switches views with Cmd+Arrow navigation", () => {
@@ -340,5 +371,39 @@ describe("usePanel", () => {
 
     document.body.removeChild(container)
     requestAnimationFrameSpy.mockRestore()
+  })
+
+  it("does not close panel on Linux window blur by hook side effect", async () => {
+    const originalUserAgent = window.navigator.userAgent
+    Object.defineProperty(window.navigator, "userAgent", {
+      configurable: true,
+      value: "Mozilla/5.0 (X11; Linux x86_64)",
+    })
+
+    const { unmount } = renderHook(() =>
+      usePanel({
+        activeView: "home",
+        setActiveView: vi.fn(),
+        showAbout: false,
+        setShowAbout: vi.fn(),
+        displayPlugins: [],
+      })
+    )
+
+    act(() => {
+      window.dispatchEvent(new Event("blur"))
+    })
+
+    await waitFor(() => {
+      expect(invokeMock).toHaveBeenCalledWith("init_panel")
+    })
+
+    expect(invokeMock).not.toHaveBeenCalledWith("hide_panel")
+
+    unmount()
+    Object.defineProperty(window.navigator, "userAgent", {
+      configurable: true,
+      value: originalUserAgent,
+    })
   })
 })

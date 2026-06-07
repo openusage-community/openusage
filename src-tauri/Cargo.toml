@@ -42,6 +42,9 @@ regex-lite = "0.1.9"
 aes-gcm = "0.10.3"
 sha2 = "0.11"
 
+[target.'cfg(target_os = "linux")'.dependencies]
+x11rb = "0.13.2"
+
 [target.'cfg(target_os = "macos")'.dependencies]
 # nspanel powers the floating menubar panel; macOS-only.
 tauri-nspanel = { git = "https://github.com/ahkohd/tauri-nspanel", branch = "v2.1" }

@@ -1,8 +1,13 @@
 #[cfg(target_os = "macos")]
 mod app_nap;
 mod config;
+#[cfg(target_os = "linux")]
+mod gnome_window_anchor;
 mod local_http_api;
 mod panel;
+mod panel_geometry;
+#[cfg(not(target_os = "macos"))]
+mod panel_non_macos;
 mod plugin_engine;
 mod tray;
 #[cfg(target_os = "macos")]
@@ -551,15 +556,18 @@ pub fn run() {
 
             use tauri::Manager;
 
-            // On non-macOS the panel is a regular window (no NSPanel focus-loss
-            // event), so hide it ourselves when it loses focus to mimic the
-            // menubar-popup behavior.
             #[cfg(not(target_os = "macos"))]
             if let Some(window) = app.get_webview_window("main") {
                 let win = window.clone();
                 window.on_window_event(move |event| {
                     if let tauri::WindowEvent::Focused(false) = event {
-                        let _ = win.hide();
+                        let is_visible = match win.is_visible() {
+                            Ok(true) => true,
+                            Ok(false) | Err(_) => return,
+                        };
+                        if crate::panel::should_hide_for_window_focus_loss_now(is_visible) {
+                            let _ = win.hide();
+                        }
                     }
                 });
             }
@@ -598,7 +606,10 @@ pub fn run() {
             }));
 
             local_http_api::init(&app_data_dir, known_plugin_ids);
-            local_http_api::start_server();
+            local_http_api::start_server(app.handle().clone());
+
+            #[cfg(target_os = "linux")]
+            gnome_window_anchor::install_if_gnome_session();
 
             tray::create(app.handle())?;
 

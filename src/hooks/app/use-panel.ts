@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import { invoke, isTauri } from "@tauri-apps/api/core"
 import { listen } from "@tauri-apps/api/event"
-import { getCurrentWindow, PhysicalSize, currentMonitor } from "@tauri-apps/api/window"
+import { getCurrentWindow, LogicalSize, currentMonitor } from "@tauri-apps/api/window"
 import type { ActiveView } from "@/components/side-nav"
 import type { DisplayPluginState } from "@/hooks/app/use-app-plugin-views"
 
@@ -28,6 +28,10 @@ function isEditableTarget(target: EventTarget | null): boolean {
   return false
 }
 
+function isLinuxRuntime(): boolean {
+  return typeof navigator !== "undefined" && /linux/i.test(navigator.userAgent)
+}
+
 export function usePanel({
   activeView,
   setActiveView,
@@ -39,6 +43,7 @@ export function usePanel({
   const scrollRef = useRef<HTMLDivElement>(null)
   const [canScrollDown, setCanScrollDown] = useState(false)
   const [maxPanelHeightPx, setMaxPanelHeightPx] = useState<number | null>(null)
+  const [arrowOffsetPx, setArrowOffsetPx] = useState(0)
   const maxPanelHeightPxRef = useRef<number | null>(null)
   const focusContainer = useCallback(() => {
     window.requestAnimationFrame(() => {
@@ -106,6 +111,15 @@ export function usePanel({
         return
       }
       unlisteners.push(u2)
+
+      const u3 = await listen<number>("panel:anchor-offset", (event) => {
+        setArrowOffsetPx(Number.isFinite(event.payload) ? event.payload : 0)
+      })
+      if (cancelled) {
+        u3()
+        return
+      }
+      unlisteners.push(u3)
     }
 
     void setup()
@@ -155,18 +169,15 @@ export function usePanel({
     if (!container) return
 
     const resizeWindow = async () => {
-      const factor = window.devicePixelRatio
-      const width = Math.ceil(PANEL_WIDTH * factor)
       const desiredHeightLogical = Math.max(1, container.scrollHeight)
 
-      let maxHeightPhysical: number | null = null
       let maxHeightLogical: number | null = null
 
       try {
         const monitor = await currentMonitor()
         if (monitor) {
-          maxHeightPhysical = Math.floor(monitor.size.height * MAX_HEIGHT_FRACTION_OF_MONITOR)
-          maxHeightLogical = Math.floor(maxHeightPhysical / factor)
+          const scaleFactor = monitor.scaleFactor || window.devicePixelRatio || 1
+          maxHeightLogical = Math.floor((monitor.size.height / scaleFactor) * MAX_HEIGHT_FRACTION_OF_MONITOR)
         }
       } catch {
         // fall through to fallback
@@ -175,7 +186,6 @@ export function usePanel({
       if (maxHeightLogical === null) {
         const screenAvailHeight = Number(window.screen?.availHeight) || MAX_HEIGHT_FALLBACK_PX
         maxHeightLogical = Math.floor(screenAvailHeight * MAX_HEIGHT_FRACTION_OF_MONITOR)
-        maxHeightPhysical = Math.floor(maxHeightLogical * factor)
       }
 
       if (maxPanelHeightPxRef.current !== maxHeightLogical) {
@@ -183,12 +193,11 @@ export function usePanel({
         setMaxPanelHeightPx(maxHeightLogical)
       }
 
-      const desiredHeightPhysical = Math.ceil(desiredHeightLogical * factor)
-      const height = Math.ceil(Math.min(desiredHeightPhysical, maxHeightPhysical!))
+      const height = Math.ceil(Math.min(desiredHeightLogical, maxHeightLogical))
 
       try {
         const currentWindow = getCurrentWindow()
-        await currentWindow.setSize(new PhysicalSize(width, height))
+        await currentWindow.setSize(new LogicalSize(PANEL_WIDTH, height))
       } catch (e) {
         console.error("Failed to resize window:", e)
       }
@@ -203,6 +212,21 @@ export function usePanel({
 
     return () => observer.disconnect()
   }, [activeView, displayPlugins])
+
+  useEffect(() => {
+    if (!isTauri()) return
+    if (isLinuxRuntime()) return
+
+    const hideOnBlur = () => {
+      invoke("hide_panel").catch(console.error)
+    }
+
+    window.addEventListener("blur", hideOnBlur)
+
+    return () => {
+      window.removeEventListener("blur", hideOnBlur)
+    }
+  }, [])
 
   useEffect(() => {
     const el = scrollRef.current
@@ -233,5 +257,6 @@ export function usePanel({
     scrollRef,
     canScrollDown,
     maxPanelHeightPx,
+    arrowOffsetPx,
   }
 }

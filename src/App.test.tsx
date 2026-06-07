@@ -176,6 +176,14 @@ vi.mock("@tauri-apps/api/window", () => ({
       this.height = height
     }
   },
+  LogicalSize: class LogicalSize {
+    width: number
+    height: number
+    constructor(width: number, height: number) {
+      this.width = width
+      this.height = height
+    }
+  },
   currentMonitor: state.currentMonitorMock,
 }))
 
@@ -244,6 +252,7 @@ import { useAppUiStore } from "@/stores/app-ui-store"
 
 describe("App", () => {
   beforeEach(() => {
+    window.history.replaceState(null, "", "/")
     useAppUiStore.getState().resetState()
     useAppPluginStore.getState().resetState()
     useAppPreferencesStore.getState().resetState()
@@ -363,6 +372,21 @@ describe("App", () => {
     expect(contextAction).toBeDefined()
     return contextAction as () => void
   }
+
+  it("renders click catcher overlay and hides panel on pointer down", async () => {
+    window.history.replaceState(null, "", "/?overlay=panel-click-catcher")
+    state.isTauriMock.mockReturnValue(true)
+
+    render(<App />)
+
+    const overlay = screen.getByTestId("panel-click-catcher")
+    fireEvent.pointerDown(overlay)
+
+    await waitFor(() => {
+      expect(state.invokeMock).toHaveBeenCalledWith("hide_panel")
+    })
+    expect(state.startBatchMock).not.toHaveBeenCalled()
+  })
 
   it("applies theme mode changes to document", async () => {
     const mq = {
@@ -496,6 +520,35 @@ describe("App", () => {
     const firstCall = state.renderTrayBarsIconMock.mock.calls[0]?.[0]
     expect(firstCall.providerIconUrl).toBe("icon-a")
     await waitFor(() => expect(state.traySetTitleMock).toHaveBeenCalledWith("--%"))
+  })
+
+  it("uses system dark foreground for Linux tray even when app theme is light", async () => {
+    const originalUserAgent = window.navigator.userAgent
+    Object.defineProperty(window.navigator, "userAgent", {
+      configurable: true,
+      value: "Mozilla/5.0 (X11; Linux x86_64)",
+    })
+    const mq = {
+      matches: true,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    } as unknown as MediaQueryList
+    const mmSpy = vi.spyOn(window, "matchMedia").mockReturnValue(mq)
+
+    state.isTauriMock.mockReturnValue(true)
+    state.loadThemeModeMock.mockResolvedValue("light")
+
+    render(<App />)
+    await waitFor(() => expect(state.renderTrayBarsIconMock).toHaveBeenCalled())
+
+    const firstCall = state.renderTrayBarsIconMock.mock.calls[0]?.[0]
+    expect(firstCall.foregroundColor).toBe("white")
+
+    mmSpy.mockRestore()
+    Object.defineProperty(window.navigator, "userAgent", {
+      configurable: true,
+      value: originalUserAgent,
+    })
   })
 
   it("bars style path passed to renderTrayBarsIcon when loadMenubarIconStyle returns bars", async () => {
@@ -693,6 +746,32 @@ describe("App", () => {
       expect(latestCall).toBeDefined()
       expect(latestCall!.style).toBe("bars")
     })
+  })
+
+  it("does not apply stale tray icon render after menubar style changes", async () => {
+    let resolveInitialRender: ((value: unknown) => void) | null = null
+    const staleImage = { id: "stale-provider-icon" }
+    const freshImage = { id: "fresh-bars-icon" }
+
+    state.renderTrayBarsIconMock
+      .mockReturnValueOnce(new Promise((resolve) => {
+        resolveInitialRender = resolve
+      }))
+      .mockResolvedValueOnce(freshImage)
+
+    render(<App />)
+    await waitFor(() => expect(state.renderTrayBarsIconMock).toHaveBeenCalledTimes(1))
+
+    const settingsButtons = await screen.findAllByRole("button", { name: "Settings" })
+    await userEvent.click(settingsButtons[0])
+    await userEvent.click(await screen.findByRole("radio", { name: "Bars" }))
+    expect(state.saveMenubarIconStyleMock).toHaveBeenCalledWith("bars")
+
+    resolveInitialRender?.(staleImage)
+
+    await waitFor(() => expect(state.renderTrayBarsIconMock).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(state.traySetIconMock).toHaveBeenCalledWith(freshImage))
+    expect(state.traySetIconMock).not.toHaveBeenCalledWith(staleImage)
   })
 
   it("settings UI persists donut menubar icon style change", async () => {

@@ -3259,6 +3259,7 @@ dependencies = [
  "time",
  "tokio",
  "uuid",
+ "x11rb",
 ]
 
 [[package]]

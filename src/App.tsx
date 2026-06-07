@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef } from "react"
+import { invoke } from "@tauri-apps/api/core"
 import { useShallow } from "zustand/react/shallow"
 import { AppShell } from "@/components/app/app-shell"
 import { useAppPluginViews } from "@/hooks/app/use-app-plugin-views"
@@ -19,7 +20,31 @@ import { useAppUiStore } from "@/stores/app-ui-store"
 const TRAY_PROBE_DEBOUNCE_MS = 500
 const TRAY_SETTINGS_DEBOUNCE_MS = 2000
 
+function isPanelClickCatcherOverlay(): boolean {
+  if (typeof window === "undefined") return false
+  return new URLSearchParams(window.location.search).get("overlay") === "panel-click-catcher"
+}
+
+function PanelClickCatcherOverlay() {
+  const hidePanel = useCallback(() => {
+    invoke("hide_panel").catch(console.error)
+  }, [])
+
+  return (
+    <div
+      data-testid="panel-click-catcher"
+      className="fixed inset-0 bg-transparent"
+      onPointerDown={hidePanel}
+      onMouseDown={hidePanel}
+    />
+  )
+}
+
 function App() {
+  if (isPanelClickCatcherOverlay()) {
+    return <PanelClickCatcherOverlay />
+  }
+
   const {
     activeView,
     setActiveView,
@@ -103,6 +128,7 @@ function App() {
     displayMode,
     menubarIconStyle,
     activeView,
+    themeMode,
   })
 
   useEffect(() => {

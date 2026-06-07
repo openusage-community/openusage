@@ -8,6 +8,17 @@ vi.mock("@tauri-apps/api/image", () => ({
 
 import { getTrayIconSizePx, makeTrayBarsSvg, renderTrayBarsIcon } from "@/lib/tray-bars-icon"
 
+function extractImageHref(svg: string): string {
+  const match = svg.match(/<image [^>]*href="([^"]+)"/)
+  return match?.[1] ?? ""
+}
+
+function decodeBase64SvgDataUrl(url: string): string {
+  const prefix = "data:image/svg+xml;base64,"
+  if (!url.startsWith(prefix)) return ""
+  return atob(url.slice(prefix.length))
+}
+
 describe("tray-bars-icon", () => {
   it("getTrayIconSizePx renders 18px at 1x and 36px at 2x", () => {
     expect(getTrayIconSizePx(1)).toBe(18)
@@ -109,6 +120,21 @@ describe("tray-bars-icon", () => {
     }
   })
 
+  it("applies foreground color to currentColor provider SVG images", () => {
+    const iconSvg =
+      '<svg viewBox="0 0 10 10" xmlns="http://www.w3.org/2000/svg"><path fill="currentColor" d="M0 0h10v10H0z"/></svg>'
+    const svg = makeTrayBarsSvg({
+      bars: [],
+      sizePx: 36,
+      providerIconUrl: `data:image/svg+xml;base64,${btoa(iconSvg)}`,
+      foregroundColor: "#ffffff",
+    })
+
+    const themedIconSvg = decodeBase64SvgDataUrl(extractImageHref(svg))
+    expect(themedIconSvg).toContain('color="#ffffff"')
+    expect(themedIconSvg).toContain('fill="currentColor"')
+  })
+
   it("falls back to circle glyph when provider icon is missing", () => {
     const svg = makeTrayBarsSvg({
       bars: [],
@@ -116,6 +142,24 @@ describe("tray-bars-icon", () => {
     })
     expect(svg).not.toContain("<image ")
     expect(svg).toContain("<circle ")
+  })
+
+  it("uses black by default for fallback foreground color", () => {
+    const svg = makeTrayBarsSvg({
+      bars: [],
+      sizePx: 36,
+    })
+    expect(svg).toContain('stroke="black"')
+  })
+
+  it("uses provided foreground color for all rendered shapes", () => {
+    const svg = makeTrayBarsSvg({
+      bars: [{ id: "a", fraction: 0.33 }],
+      sizePx: 36,
+      style: "bars",
+      foregroundColor: "#ffffff",
+    })
+    expect(svg).toContain('fill="#ffffff"')
   })
 
   it("never renders svg text", () => {

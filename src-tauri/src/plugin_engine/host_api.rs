@@ -1,9 +1,9 @@
 use aes_gcm::{
-    aead::{generic_array::typenum::U16, rand_core::RngCore, Aead, KeyInit, OsRng},
-    aes::Aes256,
     AesGcm, Nonce,
+    aead::{Aead, KeyInit, OsRng, generic_array::typenum::U16, rand_core::RngCore},
+    aes::Aes256,
 };
-use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
+use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64_STANDARD};
 use rquickjs::{Ctx, Exception, Function, Object};
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
@@ -2554,7 +2554,11 @@ fn inject_keychain<'js>(
                 log::info!("[plugin:{}] keychain read: service={}", pid_read, service);
                 match keychain_op_read(&service, None) {
                     Ok(secret) => {
-                        log::info!("[plugin:{}] keychain read hit: service={}", pid_read, service);
+                        log::info!(
+                            "[plugin:{}] keychain read hit: service={}",
+                            pid_read,
+                            service
+                        );
                         Ok(secret)
                     }
                     Err(e) => {
