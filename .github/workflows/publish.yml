@@ -55,6 +55,7 @@ jobs:
             librsvg2-dev \
             patchelf \
             libsecret-1-dev \
+            libfuse2 \
             build-essential \
             rpm
 
