@@ -125,9 +125,12 @@ function MenubarIconStylePreview({
     const trackClass = isActive ? "bg-primary-foreground/15" : "bg-foreground/15";
     const remainderClass = isActive ? "bg-primary-foreground/20" : "bg-foreground/15";
     const fillClass = isActive ? "bg-primary-foreground" : "bg-foreground";
-    const fractions = traySettingsPreview.bars.length > 0
+    const sourceFractions = traySettingsPreview.bars.length > 0
       ? traySettingsPreview.bars.map((b) => b.fraction ?? 0)
       : [0.83, 0.7, 0.56];
+    const fractions = sourceFractions.length === 1
+      ? [sourceFractions[0], sourceFractions[0]]
+      : sourceFractions;
 
     return (
       <div className="flex items-center">
@@ -135,7 +138,11 @@ function MenubarIconStylePreview({
           {fractions.map((fraction, i) => {
             const { fillPercent, remainderPercent } = getPreviewBarLayout(fraction);
             return (
-              <div key={i} className={cn("relative h-1 rounded-sm", trackClass)}>
+              <div
+                key={i}
+                data-testid="menubar-bars-preview-track"
+                className={cn("relative h-1 rounded-sm", trackClass)}
+              >
                 {remainderPercent > 0 && (
                   <span
                     aria-hidden
@@ -151,6 +158,7 @@ function MenubarIconStylePreview({
                   />
                 )}
                 <div
+                  data-testid="menubar-bars-preview-fill"
                   className={cn("h-1", fillClass)}
                   style={{ width: `${fillPercent}%`, borderRadius: "2px 1px 1px 2px" }}
                 />

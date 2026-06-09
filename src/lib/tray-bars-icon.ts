@@ -135,6 +135,12 @@ function normalizePercentText(percentText: string | undefined): string | undefin
   return trimmed.length > 0 ? trimmed : undefined
 }
 
+function getBarsForStyle(style: MenubarIconStyle, bars: TrayPrimaryBar[]): TrayPrimaryBar[] {
+  if (style !== "bars") return bars.slice(0, 1)
+  if (bars.length === 1) return [bars[0], bars[0]]
+  return bars
+}
+
 function estimateTextWidthPx(text: string, fontSize: number): number {
   // Empirical estimate for SF Pro bold numeric glyphs in tray-sized icons.
   return Math.ceil(text.length * fontSize * 0.62 + fontSize * 0.2)
@@ -215,6 +221,14 @@ function getSvgLayout(args: {
   }
 }
 
+function getStableTrayImageWidthPx(sizePx: number): number {
+  return getSvgLayout({
+    sizePx,
+    style: "provider",
+    percentText: "100%",
+  }).width
+}
+
 export function makeTrayBarsSvg(args: {
   bars: TrayPrimaryBar[]
   sizePx: number
@@ -232,11 +246,10 @@ export function makeTrayBarsSvg(args: {
     foregroundColor = "black",
   } = args
   const fg = foregroundColor.trim().length > 0 ? foregroundColor : "black"
-  const barsForStyle = style === "bars" ? bars : bars.slice(0, 1)
-  // Intentionally render a single empty track when bars mode has no data yet
-  // so the tray icon keeps a stable shape during loading/initialization.
+  const barsForStyle = getBarsForStyle(style, bars)
+  // Keep bars visually stable during loading and with a single provider.
   const n = Math.max(1, Math.min(4, barsForStyle.length || 1))
-  const text = normalizePercentText(percentText)
+  const text = style === "bars" ? undefined : normalizePercentText(percentText)
   const layout = getSvgLayout({
     sizePx,
     style,
@@ -323,18 +336,18 @@ export function makeTrayBarsSvg(args: {
     const remainderOpacity = BARS_REMAINDER_OPACITY
     const fillOpacity = BARS_FILL_OPACITY
 
-    const layoutN = Math.max(2, n)
+    const renderedTrackCount = Math.max(2, n)
     const trackH = Math.max(
       1,
-      Math.floor((height - 2 * layout.pad - (layoutN - 1) * layout.gap) / layoutN)
+      Math.floor((height - 2 * layout.pad - (renderedTrackCount - 1) * layout.gap) / renderedTrackCount)
     )
     const rx = Math.max(1, Math.floor(trackH / 3))
 
-    const totalBarsHeight = n * trackH + (n - 1) * layout.gap
+    const totalBarsHeight = renderedTrackCount * trackH + (renderedTrackCount - 1) * layout.gap
     const availableHeight = height - 2 * layout.pad
     const yOffset = layout.pad + Math.floor((availableHeight - totalBarsHeight) / 2)
 
-    for (let i = 0; i < n; i += 1) {
+    for (let i = 0; i < renderedTrackCount; i += 1) {
       const bar = barsForStyle[i]
       const y = yOffset + i * (trackH + layout.gap) + 1
       const x = layout.barsX
@@ -391,7 +404,13 @@ export function makeTrayBarsSvg(args: {
   return parts.join("")
 }
 
-async function rasterizeSvgToRgba(svg: string, widthPx: number, heightPx: number): Promise<Uint8Array> {
+async function rasterizeSvgToRgba(args: {
+  svg: string
+  svgWidthPx: number
+  canvasWidthPx: number
+  heightPx: number
+}): Promise<Uint8Array> {
+  const { svg, svgWidthPx, canvasWidthPx, heightPx } = args
   const blob = new Blob([svg], { type: "image/svg+xml" })
   const url = URL.createObjectURL(blob)
   try {
@@ -407,17 +426,18 @@ async function rasterizeSvgToRgba(svg: string, widthPx: number, heightPx: number
     await loaded
 
     const canvas = document.createElement("canvas")
-    canvas.width = widthPx
+    canvas.width = canvasWidthPx
     canvas.height = heightPx
 
     const ctx = canvas.getContext("2d")
     if (!ctx) throw new Error("Canvas 2D context missing")
 
     // Clear to transparent; template icons use alpha as mask.
-    ctx.clearRect(0, 0, widthPx, heightPx)
-    ctx.drawImage(img, 0, 0, widthPx, heightPx)
+    ctx.clearRect(0, 0, canvasWidthPx, heightPx)
+    const x = Math.floor((canvasWidthPx - svgWidthPx) / 2)
+    ctx.drawImage(img, x, 0, svgWidthPx, heightPx)
 
-    const imageData = ctx.getImageData(0, 0, widthPx, heightPx)
+    const imageData = ctx.getImageData(0, 0, canvasWidthPx, heightPx)
     return rgbaToImageDataBytes(imageData.data)
   } finally {
     URL.revokeObjectURL(url)
@@ -433,7 +453,7 @@ export async function renderTrayBarsIcon(args: {
   foregroundColor?: string
 }): Promise<Image> {
   const { bars, sizePx, style = "provider", percentText, providerIconUrl, foregroundColor } = args
-  const text = normalizePercentText(percentText)
+  const text = style === "bars" ? undefined : normalizePercentText(percentText)
   const svg = makeTrayBarsSvg({
     bars,
     sizePx,
@@ -447,8 +467,14 @@ export async function renderTrayBarsIcon(args: {
     style,
     percentText: text,
   })
-  const rgba = await rasterizeSvgToRgba(svg, layout.width, layout.height)
-  return await Image.new(rgba, layout.width, layout.height)
+  const canvasWidth = Math.max(layout.width, getStableTrayImageWidthPx(sizePx))
+  const rgba = await rasterizeSvgToRgba({
+    svg,
+    svgWidthPx: layout.width,
+    canvasWidthPx: canvasWidth,
+    heightPx: layout.height,
+  })
+  return await Image.new(rgba, canvasWidth, layout.height)
 }
 
 export function getTrayIconSizePx(devicePixelRatio: number | undefined): number {

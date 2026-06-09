@@ -241,6 +241,40 @@ describe("SettingsPage", () => {
     expect(onMenubarIconStyleChange).toHaveBeenCalledWith("bars")
   })
 
+  it("renders two bars in menubar Bars preview with one provider", () => {
+    render(
+      <SettingsPage
+        {...defaultProps}
+        menubarIconStyle="bars"
+        traySettingsPreview={{
+          ...defaultProps.traySettingsPreview,
+          bars: [{ id: "a", fraction: 0.7 }],
+        }}
+      />
+    )
+
+    const barsRadio = screen.getByRole("radio", { name: "Bars" })
+    expect(barsRadio.querySelectorAll('[data-testid="menubar-bars-preview-track"]')).toHaveLength(2)
+  })
+
+  it("duplicates one provider fill in menubar Bars preview", () => {
+    render(
+      <SettingsPage
+        {...defaultProps}
+        menubarIconStyle="bars"
+        traySettingsPreview={{
+          ...defaultProps.traySettingsPreview,
+          bars: [{ id: "a", fraction: 0.7 }],
+        }}
+      />
+    )
+
+    const barsRadio = screen.getByRole("radio", { name: "Bars" })
+    const fills = barsRadio.querySelectorAll('[data-testid="menubar-bars-preview-fill"]')
+    expect(fills).toHaveLength(2)
+    expect(Array.from(fills).map((fill) => (fill as HTMLElement).style.width)).toEqual(["70%", "70%"])
+  })
+
   it("clicking Donut triggers onMenubarIconStyleChange(\"donut\")", async () => {
     const onMenubarIconStyleChange = vi.fn()
     render(

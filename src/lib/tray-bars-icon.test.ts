@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest"
+import { beforeEach, describe, expect, it, vi } from "vitest"
 
 vi.mock("@tauri-apps/api/image", () => ({
   Image: {
@@ -6,6 +6,7 @@ vi.mock("@tauri-apps/api/image", () => ({
   },
 }))
 
+import { Image } from "@tauri-apps/api/image"
 import { getTrayIconSizePx, makeTrayBarsSvg, renderTrayBarsIcon } from "@/lib/tray-bars-icon"
 
 function extractImageHref(svg: string): string {
@@ -19,7 +20,19 @@ function decodeBase64SvgDataUrl(url: string): string {
   return atob(url.slice(prefix.length))
 }
 
+function countTrackRects(svg: string): number {
+  return svg.match(/<rect [^>]*opacity="0\.16"/g)?.length ?? 0
+}
+
+function countPaths(svg: string): number {
+  return svg.match(/<path /g)?.length ?? 0
+}
+
 describe("tray-bars-icon", () => {
+  beforeEach(() => {
+    vi.mocked(Image.new).mockClear()
+  })
+
   it("getTrayIconSizePx renders 18px at 1x and 36px at 2x", () => {
     expect(getTrayIconSizePx(1)).toBe(18)
     expect(getTrayIconSizePx(2)).toBe(36)
@@ -54,18 +67,44 @@ describe("tray-bars-icon", () => {
     })
     expect(svg).toContain("<rect ")
     expect(svg).toContain("<path ")
+    expect(countTrackRects(svg)).toBe(2)
     expect(svg).not.toContain("<image ")
   })
 
-  it("style=bars with empty bars renders a single empty track", () => {
+  it("style=bars with one bar duplicates the fill on both tracks", () => {
+    const svg = makeTrayBarsSvg({
+      bars: [{ id: "a", fraction: 0.5 }],
+      sizePx: 36,
+      style: "bars",
+    })
+
+    expect(countTrackRects(svg)).toBe(2)
+    expect(countPaths(svg)).toBe(4)
+  })
+
+  it("style=bars with empty bars renders two empty tracks", () => {
     const svg = makeTrayBarsSvg({
       bars: [],
       sizePx: 36,
       style: "bars",
     })
     expect(svg).toContain("<rect ")
+    expect(countTrackRects(svg)).toBe(2)
     expect(svg).not.toContain("<path ")
     expect(svg).not.toContain("<image ")
+  })
+
+  it("style=bars ignores provider icon and percent text", () => {
+    const svg = makeTrayBarsSvg({
+      bars: [{ id: "a", fraction: 0.5 }],
+      sizePx: 36,
+      style: "bars",
+      providerIconUrl: "data:image/svg+xml;base64,ABC",
+      percentText: "50%",
+    })
+
+    expect(svg).not.toContain("<image ")
+    expect(svg).not.toContain("<text ")
   })
 
   it("style=bars with high-end quantized fraction (0.95) renders bars (rect and path)", () => {
@@ -220,6 +259,65 @@ describe("tray-bars-icon", () => {
         sizePx: 18,
       })
       expect(img).toBeTruthy()
+    } finally {
+      window.Image = originalImage
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      ;(document as any).createElement = originalCreateElement
+    }
+  })
+
+  it("renderTrayBarsIcon uses stable image width across menubar styles", async () => {
+    const originalImage = window.Image
+    const originalCreateElement = document.createElement.bind(document)
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    ;(window as any).Image = class MockImage {
+      onload: null | (() => void) = null
+      onerror: null | (() => void) = null
+      decoding = "async"
+      set src(_value: string) {
+        queueMicrotask(() => this.onload?.())
+      }
+    }
+
+    const ctx = {
+      clearRect: () => {},
+      drawImage: () => {},
+      getImageData: (_x: number, _y: number, w: number, h: number) => ({
+        data: new Uint8ClampedArray(w * h * 4),
+      }),
+    }
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    ;(document as any).createElement = (tag: string) => {
+      const el = originalCreateElement(tag)
+      if (tag === "canvas") {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        ;(el as any).getContext = () => ctx
+      }
+      return el
+    }
+
+    try {
+      await renderTrayBarsIcon({
+        bars: [{ id: "a", fraction: 0.97 }],
+        sizePx: 36,
+        style: "provider",
+        percentText: "97%",
+      })
+      await renderTrayBarsIcon({
+        bars: [{ id: "a", fraction: 0.97 }],
+        sizePx: 36,
+        style: "donut",
+      })
+      await renderTrayBarsIcon({
+        bars: [{ id: "a", fraction: 0.97 }],
+        sizePx: 36,
+        style: "bars",
+      })
+
+      const widths = vi.mocked(Image.new).mock.calls.map((call) => call[1])
+      expect(new Set(widths).size).toBe(1)
     } finally {
       window.Image = originalImage
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
