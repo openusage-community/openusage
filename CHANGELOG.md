@@ -1,5 +1,18 @@
 # Changelog
 
+## v0.6.27
+
+### Bug Fixes
+- Update app icons by @symonbaikov
+
+---
+
+### Changelog
+
+**Full Changelog**: [v0.6.26...v0.6.27](https://github.com/openusage-community/openusage/compare/v0.6.26...v0.6.27)
+
+- [01c13db](https://github.com/openusage-community/openusage/commit/01c13db5749dbb892c2ba95ab088c8bbb1c4adf1) Update app icons by @symonbaikov
+
 ## v0.6.26
 
 ### Bug Fixes
