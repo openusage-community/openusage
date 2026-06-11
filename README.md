@@ -1,4 +1,12 @@
+<div align="center">
+
+[![OpenUsage logo](public/icon.png)](https://github.com/openusage-community/openusage)
+
 # OpenUsage Community
+
+ _Made by developers for developers_
+
+</div>
 
 Track all your AI coding subscriptions in one place.
 
