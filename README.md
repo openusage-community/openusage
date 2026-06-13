@@ -8,7 +8,7 @@ The goal of this fork is to continue the cross-platform Tauri-based direction wi
 
 See your usage at a glance from your menu bar or system tray. No digging through dashboards.
 
-![OpenUsage Community Screenshot](screenshot.png)
+![OpenUsage Community Screenshot](banner.png)
 
 ## Project Status
 
