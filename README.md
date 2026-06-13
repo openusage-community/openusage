@@ -8,7 +8,6 @@
 
 </div>
 
-
 Track all your AI coding subscriptions in one place.
 
 OpenUsage Community is an independent, community-maintained continuation of the original [OpenUsage](https://github.com/robinebers/openusage) project.
