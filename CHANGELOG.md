@@ -1,5 +1,18 @@
 # Changelog
 
+## v0.6.29
+
+### Bug Fixes
+- fix: stabilize Linux tray panel close by @symonbaikov
+
+---
+
+### Changelog
+
+**Full Changelog**: [v0.6.28...v0.6.29](https://github.com/openusage-community/openusage/compare/v0.6.28...v0.6.29)
+
+- [72804ea](https://github.com/openusage-community/openusage/commit/72804ea7ca0dd84a223970709d243b7f9ef640b2) fix: stabilize Linux tray panel close by @symonbaikov
+
 ## v0.6.28
 
 ### Chores
