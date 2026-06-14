@@ -556,21 +556,8 @@ pub fn run() {
 
             use tauri::Manager;
 
-            #[cfg(not(target_os = "macos"))]
-            if let Some(window) = app.get_webview_window("main") {
-                let win = window.clone();
-                window.on_window_event(move |event| {
-                    if let tauri::WindowEvent::Focused(false) = event {
-                        let is_visible = match win.is_visible() {
-                            Ok(true) => true,
-                            Ok(false) | Err(_) => return,
-                        };
-                        if crate::panel::should_hide_for_window_focus_loss_now(is_visible) {
-                            let _ = win.hide();
-                        }
-                    }
-                });
-            }
+            #[cfg(target_os = "linux")]
+            panel::init(app.handle())?;
 
             let version = app.package_info().version.to_string();
             log::info!("OpenUsage v{} starting", version);
