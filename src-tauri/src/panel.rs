@@ -650,10 +650,6 @@ mod platform {
             panel.hide();
         }
     }
-
-    pub fn should_hide_for_window_focus_loss_now(_is_visible: bool) -> bool {
-        true
-    }
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -661,6 +657,6 @@ use crate::panel_non_macos as platform;
 
 use platform::apply_panel_position;
 pub use platform::{
-    hide_panel, init, should_hide_for_window_focus_loss_now, show_panel,
-    show_panel_at_logical_anchor, toggle_panel, toggle_panel_at_tray_icon,
+    hide_panel, init, show_panel, show_panel_at_logical_anchor, toggle_panel,
+    toggle_panel_at_tray_icon,
 };
