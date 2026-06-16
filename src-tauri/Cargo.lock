@@ -3228,11 +3228,12 @@ dependencies = [
 
 [[package]]
 name = "openusage"
-version = "0.6.28"
+version = "0.6.30"
 dependencies = [
  "aes-gcm",
  "base64 0.22.1",
  "dirs 6.0.0",
+ "gtk",
  "libc",
  "log",
  "objc2",
