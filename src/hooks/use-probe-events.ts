@@ -38,7 +38,7 @@ export function useProbeEvents({ onResult, onBatchComplete }: UseProbeEventsOpti
 
     const setup = async () => {
       const resultUnlisten = await listen<ProbeResult>("probe:result", (event) => {
-        if (activeBatchIds.current.has(event.payload.batchId)) {
+        if (activeBatchIds.current.has(event.payload.batchId) || event.payload.batchId === "background") {
           onResult(event.payload.output)
         }
       })

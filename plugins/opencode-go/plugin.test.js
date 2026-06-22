@@ -26,31 +26,19 @@ function setHistoryQuery(ctx, rows, options = {}) {
     if (String(sql).includes("SELECT 1 AS present")) {
       if (options.assertFilters !== false) {
         expect(String(sql)).toContain(
-          "json_extract(data, '$.providerID') = 'opencode-go'",
+          "json_extract(model, '$.providerID') = 'opencode-go'",
         );
-        expect(String(sql)).toContain(
-          "json_extract(data, '$.role') = 'assistant'",
-        );
-        expect(String(sql)).toContain(
-          "json_type(data, '$.cost') IN ('integer', 'real')",
-        );
+        expect(String(sql)).toContain("cost > 0");
       }
       return JSON.stringify(list.length > 0 ? [{ present: 1 }] : []);
     }
 
     if (options.assertFilters !== false) {
       expect(String(sql)).toContain(
-        "json_extract(data, '$.providerID') = 'opencode-go'",
+        "json_extract(model, '$.providerID') = 'opencode-go'",
       );
-      expect(String(sql)).toContain(
-        "json_extract(data, '$.role') = 'assistant'",
-      );
-      expect(String(sql)).toContain(
-        "json_type(data, '$.cost') IN ('integer', 'real')",
-      );
-      expect(String(sql)).toContain(
-        "COALESCE(json_extract(data, '$.time.created'), time_created)",
-      );
+      expect(String(sql)).toContain("time_updated");
+      expect(String(sql)).toContain("cost > 0");
     }
 
     return JSON.stringify(list);
@@ -204,7 +192,7 @@ describe("opencode-go plugin", () => {
     const result = plugin.probe(ctx);
     const monthlyLine = result.lines.find((line) => line.label === "Monthly");
 
-    expect(monthlyLine.used).toBe(4.5);
+    expect(monthlyLine.used).toBe(4);
     expect(monthlyLine.resetsAt).toBe("2026-03-25T07:53:16.000Z");
     expect(monthlyLine.periodDurationMs).toBe(28 * 24 * 60 * 60 * 1000);
   });

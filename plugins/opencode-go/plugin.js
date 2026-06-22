@@ -12,23 +12,21 @@
 
   const HISTORY_EXISTS_SQL = `
     SELECT 1 AS present
-    FROM message
-    WHERE json_valid(data)
-      AND json_extract(data, '$.providerID') = 'opencode-go'
-      AND json_extract(data, '$.role') = 'assistant'
-      AND json_type(data, '$.cost') IN ('integer', 'real')
+    FROM session
+    WHERE json_valid(model)
+      AND json_extract(model, '$.providerID') = 'opencode-go'
+      AND cost > 0
     LIMIT 1
   `;
 
   const HISTORY_ROWS_SQL = `
     SELECT
-      CAST(COALESCE(json_extract(data, '$.time.created'), time_created) AS INTEGER) AS createdMs,
-      CAST(json_extract(data, '$.cost') AS REAL) AS cost
-    FROM message
-    WHERE json_valid(data)
-      AND json_extract(data, '$.providerID') = 'opencode-go'
-      AND json_extract(data, '$.role') = 'assistant'
-      AND json_type(data, '$.cost') IN ('integer', 'real')
+      time_updated AS createdMs,
+      CAST(cost AS TEXT) AS cost
+    FROM session
+    WHERE json_valid(model)
+      AND json_extract(model, '$.providerID') = 'opencode-go'
+      AND cost > 0
   `;
 
   function readNumber(value) {
@@ -45,7 +43,7 @@
       return 0;
     const percent = (used / limit) * 100;
     if (!Number.isFinite(percent)) return 0;
-    return Math.round(Math.max(0, Math.min(100, percent)) * 10) / 10;
+    return Math.floor(Math.max(0, Math.min(100, percent)));
   }
 
   function toIso(ms) {
