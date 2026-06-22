@@ -7,14 +7,14 @@
 - **Source of truth:** `~/.local/share/opencode/opencode.db`
 - **Auth discovery:** `~/.local/share/opencode/auth.json`
 - **Provider ID:** `opencode-go`
-- **Usage scope:** local observed assistant spend only
+- **Usage scope:** local observed session spend only
 
 ## Detection
 
 The plugin enables when either condition is true:
 
 - `~/.local/share/opencode/auth.json` contains an `opencode-go` entry with a non-empty `key`
-- local OpenCode history already contains `opencode-go` assistant messages with numeric `cost`
+- local OpenCode history already contains `opencode-go` sessions with cost data
 
 If neither signal exists, the plugin stays hidden.
 
@@ -24,16 +24,15 @@ OpenUsage reads the local OpenCode SQLite database directly:
 
 ```sql
 SELECT
-  CAST(COALESCE(json_extract(data, '$.time.created'), time_created) AS INTEGER) AS createdMs,
-  CAST(json_extract(data, '$.cost') AS REAL) AS cost
-FROM message
-WHERE json_valid(data)
-  AND json_extract(data, '$.providerID') = 'opencode-go'
-  AND json_extract(data, '$.role') = 'assistant'
-  AND json_type(data, '$.cost') IN ('integer', 'real')
+  time_updated AS createdMs,
+  CAST(cost AS TEXT) AS cost
+FROM session
+WHERE json_valid(model)
+  AND json_extract(model, '$.providerID') = 'opencode-go'
+  AND cost > 0
 ```
 
-Only assistant messages with numeric `cost` count. Missing remote or other-device usage is not estimated.
+Only sessions with a positive cost count. Missing remote or other-device usage is not estimated.
 
 ## Limits
 
