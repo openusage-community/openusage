@@ -469,8 +469,17 @@ describe("App", () => {
   })
 
   it("triggers refresh on visibilitychange when panel becomes visible", async () => {
+    state.loadPluginSettingsMock.mockResolvedValueOnce({ order: ["a"], disabled: [] })
     render(<App />)
     await waitFor(() => expect(state.startBatchMock).toHaveBeenCalled())
+    expect(state.probeHandlers).not.toBeNull()
+    state.probeHandlers?.onResult({
+      providerId: "a",
+      displayName: "Alpha",
+      iconUrl: "icon-a",
+      lines: [{ type: "text", label: "Now", value: "Later" }],
+    })
+    state.probeHandlers?.onBatchComplete()
     state.startBatchMock.mockClear()
 
     // Simulate panel becoming visible (document.hidden = false)

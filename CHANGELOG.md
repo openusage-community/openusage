@@ -1,5 +1,19 @@
 # Changelog
 
+## v0.6.32
+
+### New Features
+- Add OpenRouter provider plugin.
+
+### Bug Fixes
+- Refresh provider data when app window becomes visible.
+
+---
+
+### Changelog
+
+**Full Changelog**: [v0.6.31...v0.6.32](https://github.com/openusage-community/openusage/compare/v0.6.31...v0.6.32)
+
 ## v0.6.31
 
 ### New Features

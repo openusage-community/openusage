@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "id": "openrouter",
+  "name": "OpenRouter",
+  "version": "0.0.1",
+  "entry": "plugin.js",
+  "icon": "icon.svg",
+  "brandColor": "#6467F2",
+  "links": [
+    { "label": "Credits", "url": "https://openrouter.ai/settings/credits" },
+    { "label": "Activity", "url": "https://openrouter.ai/activity" }
+  ],
+  "lines": [
+    { "type": "progress", "label": "Credits", "scope": "overview", "primaryOrder": 1 },
+    { "type": "text", "label": "Remaining", "scope": "overview" },
+    { "type": "text", "label": "Spent", "scope": "overview" },
+    { "type": "badge", "label": "Tier", "scope": "overview" },
+    { "type": "progress", "label": "Key limit", "scope": "detail" },
+    { "type": "text", "label": "Key usage", "scope": "detail" }
+  ]
+}
