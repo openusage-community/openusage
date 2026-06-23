@@ -20,7 +20,9 @@ If neither signal exists, the plugin stays hidden.
 
 ## Data Source
 
-OpenUsage reads the local OpenCode SQLite database directly:
+OpenUsage reads the local OpenCode SQLite database directly.
+
+For current OpenCode databases it queries the `session` table:
 
 ```sql
 SELECT
@@ -32,7 +34,20 @@ WHERE json_valid(model)
   AND cost > 0
 ```
 
-Only sessions with a positive cost count. `time_updated` is stored in milliseconds (same unit as `Date.now()`), confirmed from OpenCode's [`packages/core/src/session/sql.ts`](https://github.com/anomalyco/opencode/blob/dev/packages/core/src/session/sql.ts) where `time_created` and `time_updated` use `Date.now()` as their default value. Missing remote or other-device usage is not estimated.
+If the `session` table does not yet have the `cost` and `model` columns (older local databases), it falls back to summing assistant messages from the `message` table:
+
+```sql
+SELECT
+  time_created AS createdMs,
+  CAST(coalesce(json_extract(data, '$.cost'), 0) AS TEXT) AS cost
+FROM message
+WHERE json_valid(data)
+  AND json_extract(data, '$.providerID') = 'opencode-go'
+  AND json_extract(data, '$.role') = 'assistant'
+  AND coalesce(json_extract(data, '$.cost'), 0) > 0
+```
+
+Only sessions/messages with a positive cost count. `time_updated`/`time_created` are stored in milliseconds (same unit as `Date.now()`), confirmed from OpenCode's [`packages/core/src/session/sql.ts`](https://github.com/anomalyco/opencode/blob/dev/packages/core/src/session/sql.ts) where `time_created` and `time_updated` use `Date.now()` as their default value. Missing remote or other-device usage is not estimated.
 
 ## Limits
 

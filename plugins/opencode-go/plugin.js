@@ -29,6 +29,27 @@
       AND cost > 0
   `;
 
+  const HISTORY_EXISTS_MESSAGE_SQL = `
+    SELECT 1 AS present
+    FROM message
+    WHERE json_valid(data)
+      AND json_extract(data, '$.providerID') = 'opencode-go'
+      AND json_extract(data, '$.role') = 'assistant'
+      AND coalesce(json_extract(data, '$.cost'), 0) > 0
+    LIMIT 1
+  `;
+
+  const HISTORY_ROWS_MESSAGE_SQL = `
+    SELECT
+      time_created AS createdMs,
+      CAST(coalesce(json_extract(data, '$.cost'), 0) AS TEXT) AS cost
+    FROM message
+    WHERE json_valid(data)
+      AND json_extract(data, '$.providerID') = 'opencode-go'
+      AND json_extract(data, '$.role') = 'assistant'
+      AND coalesce(json_extract(data, '$.cost'), 0) > 0
+  `;
+
   function readNumber(value) {
     const n = Number(value);
     return Number.isFinite(n) ? n : null;
@@ -177,15 +198,41 @@
     }
   }
 
-  function hasHistory(ctx) {
-    const result = queryRows(ctx, HISTORY_EXISTS_SQL);
+  function detectSchema(ctx) {
+    const result = queryRows(
+      ctx,
+      `PRAGMA table_info(session)`
+    );
+    if (!result.ok) return { ok: false, hasSessionCostModel: false };
+    const rows = Array.isArray(result.rows) ? result.rows : [];
+    const names = new Set();
+    for (let i = 0; i < rows.length; i += 1) {
+      const row = rows[i];
+      if (row && typeof row.name === "string") names.add(row.name);
+    }
+    return {
+      ok: true,
+      hasSessionCostModel: names.has("cost") && names.has("model"),
+    };
+  }
+
+  function historyExistsSql(hasSessionCostModel) {
+    return hasSessionCostModel ? HISTORY_EXISTS_SQL : HISTORY_EXISTS_MESSAGE_SQL;
+  }
+
+  function historyRowsSql(hasSessionCostModel) {
+    return hasSessionCostModel ? HISTORY_ROWS_SQL : HISTORY_ROWS_MESSAGE_SQL;
+  }
+
+  function hasHistory(ctx, schema) {
+    const result = queryRows(ctx, historyExistsSql(schema.hasSessionCostModel));
     if (!result.ok) return { ok: false, present: false };
     return { ok: true, present: result.rows.length > 0 };
   }
 
-  function loadHistory(ctx) {
+  function loadHistory(ctx, schema) {
     // time_updated is in milliseconds (same unit as Date.now()), confirmed from OpenCode source
-    const result = queryRows(ctx, HISTORY_ROWS_SQL);
+    const result = queryRows(ctx, historyRowsSql(schema.hasSessionCostModel));
     if (!result.ok) return result;
 
     const rows = [];
@@ -260,7 +307,8 @@
 
   function probe(ctx) {
     const authKey = loadAuthKey(ctx);
-    const history = hasHistory(ctx);
+    const schema = detectSchema(ctx);
+    const history = hasHistory(ctx, schema);
     const detected = !!authKey || (history.ok && history.present);
 
     if (!detected) {
@@ -271,7 +319,7 @@
       return { plan: "Go", lines: buildSoftEmptyLines(ctx) };
     }
 
-    const rowsResult = loadHistory(ctx);
+    const rowsResult = loadHistory(ctx, schema);
     if (!rowsResult.ok) {
       return { plan: "Go", lines: buildSoftEmptyLines(ctx) };
     }

@@ -20,25 +20,54 @@ function setAuth(ctx, value = "go-key") {
 
 function setHistoryQuery(ctx, rows, options = {}) {
   const list = Array.isArray(rows) ? rows : [];
+  const hasSessionCostModel = options.hasSessionCostModel !== false;
   ctx.host.sqlite.query.mockImplementation((dbPath, sql) => {
     expect(dbPath).toBe("~/.local/share/opencode/opencode.db");
 
+    if (String(sql).includes("PRAGMA table_info")) {
+      const columns = [
+        { name: "id" },
+        { name: "project_id" },
+        { name: "time_created" },
+        { name: "time_updated" },
+      ];
+      if (hasSessionCostModel) {
+        columns.push({ name: "cost" }, { name: "model" });
+      }
+      return JSON.stringify(columns);
+    }
+
     if (String(sql).includes("SELECT 1 AS present")) {
       if (options.assertFilters !== false) {
-        expect(String(sql)).toContain(
-          "json_extract(model, '$.providerID') = 'opencode-go'",
-        );
-        expect(String(sql)).toContain("cost > 0");
+        if (hasSessionCostModel) {
+          expect(String(sql)).toContain(
+            "json_extract(model, '$.providerID') = 'opencode-go'",
+          );
+          expect(String(sql)).toContain("cost > 0");
+        } else {
+          expect(String(sql)).toContain(
+            "json_extract(data, '$.providerID') = 'opencode-go'",
+          );
+          expect(String(sql)).toContain("json_extract(data, '$.role') = 'assistant'");
+        }
       }
       return JSON.stringify(list.length > 0 ? [{ present: 1 }] : []);
     }
 
     if (options.assertFilters !== false) {
-      expect(String(sql)).toContain(
-        "json_extract(model, '$.providerID') = 'opencode-go'",
-      );
-      expect(String(sql)).toContain("time_updated");
-      expect(String(sql)).toContain("cost > 0");
+      if (hasSessionCostModel) {
+        expect(String(sql)).toContain(
+          "json_extract(model, '$.providerID') = 'opencode-go'",
+        );
+        expect(String(sql)).toContain("time_updated");
+        expect(String(sql)).toContain("cost > 0");
+      } else {
+        expect(String(sql)).toContain(
+          "json_extract(data, '$.providerID') = 'opencode-go'",
+        );
+        expect(String(sql)).toContain("json_extract(data, '$.role') = 'assistant'");
+        expect(String(sql)).toContain("time_created");
+      }
     }
 
     return JSON.stringify(list);
@@ -249,6 +278,24 @@ describe("opencode-go plugin", () => {
     // 0.7 / 12 * 100 = 5.83 → Math.floor = 5
     // If QuickJS truncated 0.7 to 0, this would be 0
     expect(result.lines[0].used).toBe(5);
+  });
+
+  it("falls back to message table when session cost/model columns are missing", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-03-06T12:00:00.000Z"));
+
+    const ctx = makeCtx();
+    setHistoryQuery(
+      ctx,
+      [{ createdMs: Date.parse("2026-03-06T11:00:00.000Z"), cost: 3 }],
+      { hasSessionCostModel: false },
+    );
+
+    const plugin = await loadPlugin();
+    const result = plugin.probe(ctx);
+
+    expect(result.plan).toBe("Go");
+    expect(result.lines[0].used).toBe(25);
   });
 
   it("returns a soft empty state when sqlite returns malformed JSON and auth exists", async () => {
