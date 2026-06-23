@@ -32,7 +32,7 @@ WHERE json_valid(model)
   AND cost > 0
 ```
 
-Only sessions with a positive cost count. `time_updated` is stored in milliseconds (same unit as `Date.now()`), confirmed from OpenCode's `session` table schema. Missing remote or other-device usage is not estimated.
+Only sessions with a positive cost count. `time_updated` is stored in milliseconds (same unit as `Date.now()`), confirmed from OpenCode's [`packages/core/src/session/sql.ts`](https://github.com/anomalyco/opencode/blob/dev/packages/core/src/session/sql.ts) where `time_created` and `time_updated` use `Date.now()` as their default value. Missing remote or other-device usage is not estimated.
 
 ## Limits
 
