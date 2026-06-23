@@ -1,5 +1,37 @@
 # Changelog
 
+## v0.6.33
+
+### Bug Fixes
+- Fallback to message table on older OpenCode DB schema by @symonbaikov
+- Read session.cost, fix QuickJS float truncation, refresh on panel open by @rizkyfaza20
+
+### Refactor
+- Extract 'background' magic string into BACKGROUND_BATCH_ID constant by @rizkyfaza20
+
+### Chores
+- Update opencode-go plugin to 0.0.2 by @rizkyfaza20
+- Update time_updated reference from anomaly code by @rizkyfaza20
+- Confirm time_updated is in milliseconds, add note to plugin.js and provider docs by @rizkyfaza20
+- Add regression tests for CAST truncation and visibility refresh by @rizkyfaza20
+- Sync provider docs with new session table query by @rizkyfaza20
+
+---
+
+### Changelog
+
+**Full Changelog**: [v0.6.31...v0.6.33](https://github.com/openusage-community/openusage/compare/v0.6.31...v0.6.33)
+
+- [a40a64e](https://github.com/openusage-community/openusage/commit/a40a64e94fd75b9be9bfd51c270b578351edfe4f) fix(opencode-go): fallback to message table on older OpenCode DB schema by @symonbaikov
+- [f7fb8df](https://github.com/openusage-community/openusage/commit/f7fb8df4fcbe2e4cd8af9203909f40cf4ffe5726) Merge pull request #18 from rizkyfaza20/feat/fix-opencode-go-sync by @rizkyfaza20
+- [bddf692](https://github.com/openusage-community/openusage/commit/bddf69207743aa009c2e900fa9b9ab4b0ab41858) bump: update opencode-go plugin to 0.0.2 by @rizkyfaza20
+- [5e67fac](https://github.com/openusage-community/openusage/commit/5e67facdf48f9370ce0039ef87af0eb6e70306bf) docs: update time_updated reference from anomaly code by @rizkyfaza20
+- [170f1da](https://github.com/openusage-community/openusage/commit/170f1dae969bcb406e2ea73f15d7b40fa595de34) docs: confirm time_updated is in milliseconds, add note to plugin.js and provider docs by @rizkyfaza20
+- [ddbf24c](https://github.com/openusage-community/openusage/commit/ddbf24c165c576bf5cd15832ca5bf9497157b48c) refactor(use-probe-events): extract 'background' magic string into BACKGROUND_BATCH_ID constant by @rizkyfaza20
+- [1744ec0](https://github.com/openusage-community/openusage/commit/1744ec0df971a51f7f4e4d87b0d8bda4aa1dd4c9) test(opencode-go): add regression tests for CAST truncation and visibility refresh by @rizkyfaza20
+- [47d7e0a](https://github.com/openusage-community/openusage/commit/47d7e0af8c6cec306d53ddc7acf25549178617e9) docs(opencode-go): sync provider docs with new session table query by @rizkyfaza20
+- [6cd3058](https://github.com/openusage-community/openusage/commit/6cd305877b523b652bd37a086efe514c3acba6b0) fix(opencode-go): read session.cost, fix QuickJS float truncation, refresh on panel open by @rizkyfaza20
+
 ## v0.6.31
 
 ### New Features
