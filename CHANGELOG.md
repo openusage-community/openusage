@@ -3,9 +3,6 @@
 ## v0.6.32
 
 ### New Features
-- Add OpenRouter provider plugin.
-
-### Bug Fixes
 - Refresh provider data when app window becomes visible.
 
 ---
