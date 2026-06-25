@@ -16,8 +16,10 @@ import {
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { GripVertical } from "lucide-react";
+import { useState } from "react";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Button } from "@/components/ui/button";
+import { ErrorLogsDialog } from "@/components/error-logs-dialog";
 import { GlobalShortcutSection } from "@/components/global-shortcut-section";
 import { getBarFillLayout, getTrayIconSizePx } from "@/lib/tray-bars-icon";
 import {
@@ -312,6 +314,7 @@ export function SettingsPage({
   startOnLogin,
   onStartOnLoginChange,
 }: SettingsPageProps) {
+  const [showErrorLogs, setShowErrorLogs] = useState(false);
   const sensors = useSensors(
     useSensor(PointerSensor),
     useSensor(KeyboardSensor, {
@@ -539,6 +542,21 @@ export function SettingsPage({
         </label>
       </section>
       <section>
+        <h3 className="text-lg font-semibold mb-0">Error Logs</h3>
+        <p className="text-sm text-muted-foreground mb-2">
+          Recent app errors by day
+        </p>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="w-full justify-start"
+          onClick={() => setShowErrorLogs(true)}
+        >
+          Open error logs
+        </Button>
+      </section>
+      <section>
         <h3 className="text-lg font-semibold mb-0">Plugins</h3>
         <p className="text-sm text-muted-foreground mb-2">
           Your AI coding lineup
@@ -564,6 +582,9 @@ export function SettingsPage({
           </DndContext>
         </div>
       </section>
+      {showErrorLogs && (
+        <ErrorLogsDialog onClose={() => setShowErrorLogs(false)} />
+      )}
     </div>
   );
 }

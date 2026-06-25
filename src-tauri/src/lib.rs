@@ -1,6 +1,7 @@
 #[cfg(target_os = "macos")]
 mod app_nap;
 mod config;
+mod error_logs;
 #[cfg(target_os = "linux")]
 mod gnome_window_anchor;
 mod local_http_api;
@@ -425,6 +426,31 @@ fn export_usage_history(
     )
 }
 
+#[tauri::command]
+fn list_error_log_days(
+    app_handle: tauri::AppHandle,
+) -> Result<Vec<error_logs::ErrorLogDay>, String> {
+    error_logs::list_days(&app_handle)
+}
+
+#[tauri::command]
+fn read_error_log_day(
+    app_handle: tauri::AppHandle,
+    date: String,
+) -> Result<error_logs::ErrorLogRead, String> {
+    error_logs::read_day(&app_handle, &date)
+}
+
+#[tauri::command]
+fn record_frontend_error(
+    app_handle: tauri::AppHandle,
+    source: String,
+    message: String,
+    stack: Option<String>,
+) -> Result<(), String> {
+    error_logs::record_frontend_error(&app_handle, &source, &message, stack.as_deref())
+}
+
 /// Update the global shortcut registration.
 /// Pass `null` to disable the shortcut, or a shortcut string like "CommandOrControl+Shift+U".
 #[cfg(desktop)]
@@ -556,6 +582,7 @@ pub fn run() {
                 .targets([
                     Target::new(TargetKind::Stdout),
                     Target::new(TargetKind::LogDir { file_name: None }),
+                    error_logs::daily_error_target(),
                 ])
                 .max_file_size(10_000_000) // 10 MB
                 .level(log::LevelFilter::Trace) // Allow all levels; runtime filter via tray menu
@@ -577,6 +604,9 @@ pub fn run() {
             get_log_path,
             list_usage_history_range,
             export_usage_history,
+            list_error_log_days,
+            read_error_log_day,
+            record_frontend_error,
             update_global_shortcut
         ])
         .setup(|app| {
@@ -590,6 +620,8 @@ pub fn run() {
             }
 
             use tauri::Manager;
+
+            error_logs::configure(app.handle())?;
 
             #[cfg(target_os = "linux")]
             panel::init(app.handle())?;

@@ -3,7 +3,12 @@ import type { ReactNode } from "react"
 import userEvent from "@testing-library/user-event"
 import { afterEach, describe, expect, it, vi } from "vitest"
 
+const invokeMock = vi.hoisted(() => vi.fn())
 let latestOnDragEnd: ((event: any) => void) | undefined
+
+vi.mock("@tauri-apps/api/core", () => ({
+  invoke: invokeMock,
+}))
 
 vi.mock("@dnd-kit/core", () => ({
   DndContext: ({ children, onDragEnd }: { children: ReactNode; onDragEnd?: (event: any) => void }) => {
@@ -73,6 +78,7 @@ const defaultProps = {
 
 afterEach(() => {
   cleanup()
+  invokeMock.mockReset()
 })
 
 describe("SettingsPage", () => {
@@ -303,5 +309,23 @@ describe("SettingsPage", () => {
     )
     await userEvent.click(screen.getByText("Start on login"))
     expect(onStartOnLoginChange).toHaveBeenCalledWith(true)
+  })
+
+  it("opens error logs dialog from settings", async () => {
+    invokeMock.mockImplementation(async (command: string) => {
+      if (command === "list_error_log_days") {
+        return [{ date: "2026-06-25", count: 1 }]
+      }
+      if (command === "read_error_log_day") {
+        return { date: "2026-06-25", content: "stored error", lineCount: 1 }
+      }
+      return null
+    })
+
+    render(<SettingsPage {...defaultProps} />)
+    await userEvent.click(screen.getByRole("button", { name: "Open error logs" }))
+
+    expect(await screen.findByRole("heading", { name: "Error Logs", level: 2 })).toBeInTheDocument()
+    expect(await screen.findByText("stored error")).toBeInTheDocument()
   })
 })

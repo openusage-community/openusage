@@ -21,7 +21,17 @@ If OpenUsage does not open at all, skip this step and continue.
 2. Wait for the failure to happen.
 3. Stop after 1-2 attempts (enough data, less noise).
 
-## 3) Open the log folder in Finder
+## 3) Check recent error logs in OpenUsage
+
+1. Open OpenUsage.
+2. Go to `Settings`.
+3. Click `Open error logs`.
+4. Pick the day when the issue happened.
+5. Copy the visible error text into your bug report.
+
+If OpenUsage does not open, continue with the log folder steps below.
+
+## 4) Open the log folder in Finder
 
 1. Open Finder.
 2. Press `Shift` + `Command` + `G`.
@@ -33,13 +43,13 @@ If OpenUsage does not open at all, skip this step and continue.
 
 4. Press `Enter`.
 
-## 4) Attach log files to your GitHub issue
+## 5) Attach log files to your GitHub issue
 
 1. Attach `openusage.log`.
 2. If you also see files like `openusage.log.1`, attach those too.
 3. Drag the files directly into your issue/comment on GitHub.
 
-## 5) Add this context in the same issue comment
+## 6) Add this context in the same issue comment
 
 Copy/paste and fill:
 
