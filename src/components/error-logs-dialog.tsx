@@ -100,13 +100,18 @@ export function ErrorLogsDialog({ onClose }: ErrorLogsDialogProps) {
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm rounded-xl"
+      className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm"
       onClick={handleBackdropClick}
     >
-      <div className="bg-card rounded-lg border shadow-xl p-4 max-w-[31rem] w-[calc(100%-2rem)] max-h-[calc(100%-2rem)] mx-4 animate-in fade-in zoom-in-95 duration-200 flex flex-col">
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="error-logs-title"
+        className="bg-card p-4 w-full h-full animate-in fade-in zoom-in-95 duration-200 flex flex-col"
+      >
         <div className="flex items-start justify-between gap-3 mb-3">
           <div>
-            <h2 className="text-sm font-semibold">Error Logs</h2>
+            <h2 id="error-logs-title" className="text-sm font-semibold">Error Logs</h2>
             <p className="text-xs text-muted-foreground">Local app errors by day</p>
           </div>
           <div className="flex items-center gap-1">
@@ -129,8 +134,8 @@ export function ErrorLogsDialog({ onClose }: ErrorLogsDialogProps) {
         ) : days.length === 0 ? (
           <div className="text-xs text-muted-foreground py-4">No error logs yet.</div>
         ) : (
-          <div className="grid grid-cols-[8.5rem_minmax(0,1fr)] gap-3 min-h-0">
-            <div className="space-y-1 overflow-y-auto max-h-72 pr-1">
+          <div className="flex flex-col gap-3 min-h-0 flex-1">
+            <div className="flex gap-2 overflow-x-auto pb-1">
               {days.map((day) => (
                 <button
                   key={day.date}
@@ -139,7 +144,7 @@ export function ErrorLogsDialog({ onClose }: ErrorLogsDialogProps) {
                   aria-pressed={day.date === selectedDate}
                   onClick={() => setSelectedDate(day.date)}
                   className={[
-                    "w-full rounded-md px-2 py-1.5 text-left text-xs transition-colors",
+                    "shrink-0 rounded-full px-4 py-2 text-left text-xs transition-colors",
                     day.date === selectedDate
                       ? "bg-primary text-primary-foreground"
                       : "bg-muted/50 text-foreground hover:bg-muted",
@@ -152,7 +157,7 @@ export function ErrorLogsDialog({ onClose }: ErrorLogsDialogProps) {
                 </button>
               ))}
             </div>
-            <div className="min-w-0">
+            <div className="min-w-0 min-h-0 flex-1">
               {error ? (
                 <div className="text-xs text-destructive rounded-md border border-destructive/40 p-2">
                   {error}
@@ -160,7 +165,7 @@ export function ErrorLogsDialog({ onClose }: ErrorLogsDialogProps) {
               ) : loadingLog ? (
                 <div className="text-xs text-muted-foreground py-4">Loading log...</div>
               ) : (
-                <pre className="max-h-72 overflow-auto rounded-md border bg-background p-2 text-[11px] leading-4 text-foreground whitespace-pre-wrap select-text">
+                <pre className="h-full overflow-auto rounded-md border bg-background p-2 text-[11px] leading-4 text-foreground whitespace-pre-wrap select-text">
                   {log?.content || "No errors for this day."}
                 </pre>
               )}

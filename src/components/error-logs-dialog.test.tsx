@@ -44,8 +44,11 @@ describe("ErrorLogsDialog", () => {
     render(<ErrorLogsDialog onClose={vi.fn()} />)
 
     expect(await screen.findByText("Error Logs")).toBeInTheDocument()
+    expect(screen.getByRole("dialog")).toHaveClass("w-full", "h-full")
     expect(await screen.findByText(textIncludes("today error"))).toBeInTheDocument()
-    expect(screen.getByRole("button", { name: "2026-06-25, 2 errors" })).toHaveAttribute("aria-pressed", "true")
+    const selectedDay = screen.getByRole("button", { name: "2026-06-25, 2 errors" })
+    expect(selectedDay).toHaveClass("rounded-full", "shrink-0")
+    expect(selectedDay).toHaveAttribute("aria-pressed", "true")
   })
 
   it("switches between available days", async () => {
