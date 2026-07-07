@@ -126,6 +126,8 @@ Progress bars, badges, clear labels. No mental math required.
 * [**Kimi Code**](docs/providers/kimi.md) / session, weekly
 * [**MiniMax**](docs/providers/minimax.md) / coding plan session
 * [**OpenCode Go**](docs/providers/opencode-go.md) / 5h, weekly, monthly spend limits
+* [**Perplexity**](docs/providers/perplexity.md) / API credits, queries, research usage
+* [**Synthetic**](docs/providers/synthetic.md) / rate limits, mana, subscription usage
 * [**Windsurf**](docs/providers/windsurf.md) / prompt credits, flex credits
 * [**Z.ai**](docs/providers/zai.md) / session, weekly, web searches
 
