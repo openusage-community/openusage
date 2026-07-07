@@ -10,7 +10,7 @@
 
 OpenUsage Community is an independent, community-maintained continuation of the original [OpenUsage](https://github.com/robinebers/openusage) project.
 
-The goal of this fork is to continue the cross-platform Tauri-based direction with a strong focus on Linux support, while keeping macOS support and leaving room for future Windows support.
+The goal of this fork is to continue the cross-platform Tauri-based direction with official Linux support, best-effort macOS support, and room for future Windows support.
 
 See your usage at a glance from your menu bar or system tray. No digging through dashboards.
 
@@ -20,10 +20,10 @@ See your usage at a glance from your menu bar or system tray. No digging through
 
 OpenUsage Community is currently focused on:
 
-* Linux support
+* Official Linux support
 * Stable AppImage, `.deb`, and `.rpm` releases
 * System tray behavior across different Linux desktop environments
-* Keeping macOS support working
+* Best-effort unsigned macOS builds through Homebrew
 * Preserving the lightweight Tauri-based architecture
 * Community-driven maintenance and provider contributions
 
@@ -55,7 +55,7 @@ Use Homebrew:
 brew install --cask openusage-community/openusage/openusage
 ```
 
-OpenUsage is currently unsigned on macOS. The Homebrew cask removes the quarantine flag after install so the app can open normally.
+macOS support is best-effort and Homebrew-only. OpenUsage is unsigned on macOS because this project does not currently use a paid Apple Developer account. The Homebrew cask removes the quarantine flag after install so the app can open normally.
 
 ## Linux Notes
 
