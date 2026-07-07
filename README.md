@@ -34,7 +34,8 @@ This project is independent from the original OpenUsage project. It exists becau
 macOS:
 
 ```sh
-brew install --cask https://raw.githubusercontent.com/openusage-community/openusage/main/Casks/openusage.rb
+brew tap openusage-community/openusage https://github.com/openusage-community/openusage.git
+brew install --cask openusage-community/openusage/openusage
 ```
 
 Linux: [**Download the latest release**](https://github.com/openusage-community/openusage/releases/latest)
@@ -52,7 +53,8 @@ The app auto-updates where supported. Install once and you're set.
 Use Homebrew:
 
 ```sh
-brew install --cask https://raw.githubusercontent.com/openusage-community/openusage/main/Casks/openusage.rb
+brew tap openusage-community/openusage https://github.com/openusage-community/openusage.git
+brew install --cask openusage-community/openusage/openusage
 ```
 
 macOS support is best-effort and Homebrew-only. OpenUsage is unsigned on macOS because this project does not currently use a paid Apple Developer account. The Homebrew cask removes the quarantine flag after install so the app can open normally.
