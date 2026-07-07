@@ -1,5 +1,18 @@
 # Changelog
 
+## v0.6.36
+
+### Bug Fixes
+- prevent provider name wrapping by @Symon
+
+---
+
+### Changelog
+
+**Full Changelog**: [v0.6.35...v0.6.36](https://github.com/openusage-community/openusage/compare/v0.6.35...v0.6.36)
+
+- [a99923e](https://github.com/openusage-community/openusage/commit/a99923e5d7b85d06fbe2f0c7c64d98bff721d5d7) fix: prevent provider name wrapping by @Symon
+
 ## v0.6.35
 
 ### New Features
