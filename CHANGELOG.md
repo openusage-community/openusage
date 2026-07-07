@@ -1,5 +1,32 @@
 # Changelog
 
+## v0.6.34
+
+### Bug Fixes
+- expand error logs dialog by @symonbaikov
+- make macOS install Homebrew-first by @symonbaikov
+- require verified macOS release signing by @symonbaikov
+- Add error logs viewer ([#21](https://github.com/openusage-community/openusage/pull/21)) by @symonbaikov
+
+### Chores
+- fix custom Homebrew tap install by @symonbaikov
+- fix Homebrew cask install command by @symonbaikov
+- clarify macOS support status by @symonbaikov
+
+---
+
+### Changelog
+
+**Full Changelog**: [v0.6.33...v0.6.34](https://github.com/openusage-community/openusage/compare/v0.6.33...v0.6.34)
+
+- [86508ae](https://github.com/openusage-community/openusage/commit/86508aed42743ec18c74ac16848d373cd891d2e9) fix: expand error logs dialog by @symonbaikov
+- [750d75a](https://github.com/openusage-community/openusage/commit/750d75a489f875b417676700d8bd190323f9981b) docs: fix custom Homebrew tap install by @symonbaikov
+- [f0a7d64](https://github.com/openusage-community/openusage/commit/f0a7d6445cf98c36d7f0381d3e6043cb06b0ee6b) docs: fix Homebrew cask install command by @symonbaikov
+- [7ba90bd](https://github.com/openusage-community/openusage/commit/7ba90bd472fab1453498c14c47e0404d9d4dfeed) docs: clarify macOS support status by @symonbaikov
+- [f357be0](https://github.com/openusage-community/openusage/commit/f357be04a04b522ea2680828c65badfb844e31ae) fix: make macOS install Homebrew-first by @symonbaikov
+- [9bbd089](https://github.com/openusage-community/openusage/commit/9bbd08940593cd501c24130781dd77cccdb0032b) fix: require verified macOS release signing by @symonbaikov
+- [24772c7](https://github.com/openusage-community/openusage/commit/24772c7a4c5020fe5033434c1cb47d5d76ac430f) Add error logs viewer (#21) by @symonbaikov
+
 ## v0.6.33
 
 ### Bug Fixes
