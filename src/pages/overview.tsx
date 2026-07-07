@@ -1,4 +1,5 @@
 import { ProviderCard } from "@/components/provider-card"
+import { TotalSpendChart } from "@/components/total-spend-chart"
 import type { PluginDisplayState } from "@/lib/plugin-types"
 import type { DisplayMode, ResetTimerDisplayMode, TimeFormatMode } from "@/lib/settings"
 
@@ -29,6 +30,7 @@ export function OverviewPage({
 
   return (
     <div>
+      <TotalSpendChart plugins={plugins} />
       {plugins.map((plugin, index) => (
         <ProviderCard
           key={plugin.meta.id}
