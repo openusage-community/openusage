@@ -51,6 +51,36 @@ describe("OverviewPage", () => {
     expect(screen.getAllByText("$10.00").length).toBeGreaterThan(0)
   })
 
+  it("keeps total spend provider labels on one line with large amounts", () => {
+    const plugins = [
+      {
+        meta: { id: "codex", name: "Codex", iconUrl: "icon", brandColor: "#111111", lines: [] },
+        data: {
+          providerId: "codex",
+          displayName: "Codex",
+          lines: [
+            { type: "text" as const, label: "Last 30 Days", value: "$1,951.68 · 3M tokens" },
+          ],
+          iconUrl: "icon",
+        },
+        loading: false,
+        error: null,
+        lastManualRefreshAt: null,
+        lastUpdatedAt: null,
+      },
+    ]
+
+    render(<OverviewPage plugins={plugins} displayMode="used" resetTimerDisplayMode="relative" />)
+
+    const providerLabel = screen
+      .getAllByText("Codex")
+      .find((element) => element.classList.contains("truncate"))
+
+    expect(providerLabel).toBeDefined()
+    expect(providerLabel).toHaveClass("truncate", "whitespace-nowrap")
+    expect(screen.getByText("$1,951.68")).toHaveClass("shrink-0", "text-right")
+  })
+
   it("shows total spend empty state without dollar data", () => {
     const plugins = [
       {

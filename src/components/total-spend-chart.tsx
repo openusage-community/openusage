@@ -66,14 +66,14 @@ export function TotalSpendChart({ plugins }: TotalSpendChartProps) {
             <div className="min-w-0 space-y-2">
               {summary.rows.map((row) => (
                 <div key={row.id} className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3">
-                  <div className="flex min-w-0 items-start gap-2">
+                  <div className="flex min-w-0 items-center gap-2">
                     <span
-                      className="mt-1 h-2.5 w-2.5 flex-shrink-0 rounded-full"
+                      className="h-2.5 w-2.5 flex-shrink-0 rounded-full"
                       style={{ backgroundColor: row.color }}
                     />
                     <span
                       className={cn(
-                        "min-w-0 break-words leading-tight text-foreground",
+                        "min-w-0 truncate whitespace-nowrap leading-tight text-foreground",
                         row.name.length > 22
                           ? "text-[11px]"
                           : row.name.length > 14
@@ -84,7 +84,7 @@ export function TotalSpendChart({ plugins }: TotalSpendChartProps) {
                       {row.name}
                     </span>
                   </div>
-                  <span className="text-sm tabular-nums text-muted-foreground">
+                  <span className="shrink-0 text-right text-sm tabular-nums text-muted-foreground">
                     {formatSpendAmount(row.amount)}
                   </span>
                 </div>
