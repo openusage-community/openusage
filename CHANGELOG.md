@@ -1,5 +1,18 @@
 # Changelog
 
+## v0.6.37
+
+### Bug Fixes
+- keep total spend labels on one line by @Symon
+
+---
+
+### Changelog
+
+**Full Changelog**: [v0.6.36...v0.6.37](https://github.com/openusage-community/openusage/compare/v0.6.36...v0.6.37)
+
+- [8a17895](https://github.com/openusage-community/openusage/commit/8a178956e4ec2ccd62358b27af5ec98b0035b4d7) fix: keep total spend labels on one line by @Symon
+
 ## v0.6.36
 
 ### Bug Fixes
