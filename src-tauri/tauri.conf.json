@@ -1,12 +1,13 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "OpenUsage",
+  "mainBinaryName": "openusage",
   "version": "0.6.37",
   "identifier": "com.sunstory.openusage",
   "build": {
     "beforeDevCommand": "bun run bundle:plugins && bun run dev",
     "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "bun run bundle:plugins && bun run build",
+    "beforeBuildCommand": "bun run bundle:plugins && bun run build && bash scripts/prepare-cli-sidecar.sh",
     "frontendDist": "../dist"
   },
   "app": {
@@ -30,6 +31,12 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "publisher": "OpenUsage Community",
+    "homepage": "https://github.com/openusage-community/openusage",
+    "shortDescription": "OpenUsage Community tracks AI coding subscription usage from the menu bar or system tray.",
+    "longDescription": "OpenUsage Community is an independent, community-maintained continuation of the original OpenUsage project. Windows support includes code adapted from barramee27/crossusage.",
+    "copyright": "Original OpenUsage © Robin Ebers and contributors; Windows support adapted from barramee27/crossusage contributors",
+    "license": "MIT",
     "macOS": {
       "dmg": {
         "appPosition": {
@@ -55,8 +62,17 @@
     ],
     "resources": [
       "resources/bundled_plugins/**/*",
+      "resources/WINDOWS-PORTABLE.txt",
       "icons/tray-icon.png"
     ],
+    "externalBin": [
+      "binaries/openusage-cli"
+    ],
+    "windows": {
+      "nsis": {
+        "startMenuFolder": "OpenUsage"
+      }
+    },
     "createUpdaterArtifacts": true
   },
   "plugins": {

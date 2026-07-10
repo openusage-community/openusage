@@ -1,0 +1,78 @@
+// Windows support adapted from barramee27/crossusage (MIT): https://github.com/barramee27/crossusage
+use tauri::{AppHandle, Manager, PhysicalPosition, Position, Size};
+
+use crate::popover_platform;
+
+/// Show the panel anchored to the tray when possible.
+pub fn show_panel(app_handle: &AppHandle) {
+    if let Some(window) = app_handle.get_webview_window("main") {
+        let _ = window.show();
+        popover_platform::move_main_near_tray(app_handle);
+        let _ = window.set_focus();
+    }
+}
+
+/// Hide the main window without exiting the tray app.
+pub fn hide_panel(app_handle: &AppHandle) {
+    if let Some(window) = app_handle.get_webview_window("main") {
+        let _ = window.hide();
+    }
+}
+
+/// Toggle panel visibility (global shortcut). Positions near tray when opening.
+pub fn toggle_panel(app_handle: &AppHandle) {
+    if let Some(window) = app_handle.get_webview_window("main") {
+        if window.is_visible().unwrap_or(false) {
+            log::debug!("toggle_panel: hiding window");
+            let _ = window.hide();
+        } else {
+            log::debug!("toggle_panel: showing window");
+            let _ = window.show();
+            popover_platform::move_main_near_tray(app_handle);
+            let _ = window.set_focus();
+        }
+    }
+}
+
+pub fn toggle_panel_at_tray_icon(
+    app_handle: &AppHandle,
+    _click_position: PhysicalPosition<f64>,
+    _icon_position: Position,
+    _icon_size: Size,
+) {
+    toggle_panel(app_handle);
+}
+
+pub fn init(app_handle: &tauri::AppHandle) -> tauri::Result<()> {
+    if let Some(window) = app_handle.get_webview_window("main") {
+        // Native window chrome (caption, taskbar, minimize) — not frameless popover.
+        let _ = window.set_decorations(true);
+        let _ = window.set_skip_taskbar(false);
+        let _ = window.set_always_on_top(false);
+        let _ = window.set_shadow(true);
+        let _ = window.set_minimizable(true);
+        let _ = window.set_maximizable(true);
+        let _ = window.set_closable(true);
+        let _ = window.set_resizable(true);
+        let _ = window.set_min_size(Some(tauri::Size::Logical(tauri::LogicalSize {
+            width: 400.0,
+            height: 480.0,
+        })));
+        let _ = window.set_size(tauri::Size::Logical(tauri::LogicalSize {
+            width: 600.0,
+            height: 800.0,
+        }));
+
+        let handle = app_handle.clone();
+        window.on_window_event(move |event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                api.prevent_close();
+                if let Some(w) = handle.get_webview_window("main") {
+                    let _ = w.hide();
+                }
+            }
+        });
+    }
+
+    Ok(())
+}

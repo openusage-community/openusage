@@ -1,0 +1,8 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/openusage-core",
+    "crates/openusage-cli",
+    "crates/openusage-win-launcher",
+    "src-tauri",
+]

@@ -16,11 +16,11 @@ if [ -f "$TAURI_SIGNING_PRIVATE_KEY" ]; then
 fi
 
 # Clean previous bundle
-rm -rf src-tauri/target/release/bundle
+rm -rf target/release/bundle
 
 # Build
-bun tauri build "$@"
+NO_STRIP=true bun tauri build "$@"
 
 echo ""
 echo "✓ Build complete! Output:"
-ls -la src-tauri/target/release/bundle/dmg/*.dmg 2>/dev/null || ls -la src-tauri/target/release/bundle/macos/*.app
+ls -la target/release/bundle/dmg/*.dmg 2>/dev/null || ls -la target/release/bundle/macos/*.app

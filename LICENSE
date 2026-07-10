@@ -1,6 +1,9 @@
 MIT License
 
 Copyright (c) 2026 Robin Ebers
+Copyright (c) 2026 OpenUsage Community contributors
+Windows support includes code adapted from barramee27/crossusage contributors:
+https://github.com/barramee27/crossusage
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal

@@ -5,14 +5,24 @@ mod error_logs;
 #[cfg(target_os = "linux")]
 mod gnome_window_anchor;
 mod local_http_api;
+#[cfg(not(target_os = "windows"))]
 mod panel;
 mod panel_geometry;
-#[cfg(not(target_os = "macos"))]
+#[cfg(target_os = "linux")]
 mod panel_non_macos;
-mod plugin_engine;
+#[cfg(target_os = "windows")]
+mod panel_windows;
+// Windows support adapted from barramee27/crossusage (MIT): https://github.com/barramee27/crossusage
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+mod popover_platform;
 mod tray;
 #[cfg(target_os = "macos")]
 mod webkit_config;
+
+#[cfg(target_os = "windows")]
+use panel_windows as panel;
+
+use openusage_core::plugin_engine;
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
@@ -623,7 +633,7 @@ pub fn run() {
 
             error_logs::configure(app.handle())?;
 
-            #[cfg(target_os = "linux")]
+            #[cfg(any(target_os = "linux", target_os = "windows"))]
             panel::init(app.handle())?;
 
             let version = app.package_info().version.to_string();
@@ -650,7 +660,8 @@ pub fn run() {
                 redacted_app_data_dir
             );
 
-            let (_, plugins) = plugin_engine::initialize_plugins(&app_data_dir, &resource_dir);
+            let (_, plugins) =
+                plugin_engine::initialize_plugins(&app_data_dir, Some(&resource_dir));
             let known_plugin_ids: Vec<String> =
                 plugins.iter().map(|p| p.manifest.id.clone()).collect();
             app.manage(Mutex::new(AppState {

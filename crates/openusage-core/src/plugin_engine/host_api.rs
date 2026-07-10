@@ -1,36 +1,27 @@
+// Windows support adapted from barramee27/crossusage (MIT): https://github.com/barramee27/crossusage
+use crate::provider_accounts::{self, ProviderAccountContext, ProviderCredential};
 use aes_gcm::{
     AesGcm, Nonce,
     aead::{Aead, KeyInit, OsRng, generic_array::typenum::U16, rand_core::RngCore},
     aes::Aes256,
 };
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64_STANDARD};
-use rquickjs::{Ctx, Exception, Function, Object};
+use rquickjs::{Ctx, Exception, Function, Object, function::Rest};
+use rusqlite::{Connection, OpenFlags};
+use serde_json::{Map, Value as JsonValue};
 use sha2::{Digest, Sha256};
+#[cfg(test)]
+use std::collections::VecDeque;
 use std::collections::{HashMap, HashSet};
+
 use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
+#[cfg(unix)]
+use users::os::unix::UserExt;
 
-const WHITELISTED_ENV_VARS: [&str; 16] = [
-    "CODEX_HOME",
-    "CLAUDE_CONFIG_DIR",
-    "CLAUDE_CODE_OAUTH_TOKEN",
-    "USER_TYPE",
-    "USE_STAGING_OAUTH",
-    "USE_LOCAL_OAUTH",
-    "CLAUDE_CODE_CUSTOM_OAUTH_URL",
-    "CLAUDE_CODE_OAUTH_CLIENT_ID",
-    "CLAUDE_LOCAL_OAUTH_API_BASE",
-    "ZAI_API_KEY",
-    "GLM_API_KEY",
-    "MINIMAX_API_KEY",
-    "MINIMAX_API_TOKEN",
-    "MINIMAX_CN_API_KEY",
-    "SYNTHETIC_API_KEY",
-    "PI_CODING_AGENT_DIR",
-];
 const MIN_BLOCKING_TIMEOUT: Duration = Duration::from_millis(1);
 
 #[derive(Clone, Copy, Debug)]
@@ -39,7 +30,6 @@ pub(crate) struct ProbeDeadline {
 }
 
 impl ProbeDeadline {
-    #[cfg(test)]
     pub(crate) fn none() -> Self {
         Self { expires_at: None }
     }
@@ -75,9 +65,37 @@ fn log_probe_deadline_skip(plugin_id: &str, operation: &str) {
     );
 }
 
-fn probe_timeout_error<'js>(ctx: &Ctx<'js>) -> rquickjs::Error {
-    Exception::throw_message(ctx, "probe timed out")
-}
+const WHITELISTED_ENV_VARS: [&str; 26] = [
+    "CODEX_HOME",
+    "CLAUDE_CONFIG_DIR",
+    "CLAUDE_CODE_OAUTH_TOKEN",
+    "CROFAI_API_KEY",
+    "USER_TYPE",
+    "USE_STAGING_OAUTH",
+    "USE_LOCAL_OAUTH",
+    "CLAUDE_CODE_CUSTOM_OAUTH_URL",
+    "CLAUDE_CODE_OAUTH_CLIENT_ID",
+    "CLAUDE_LOCAL_OAUTH_API_BASE",
+    "ZAI_API_KEY",
+    "GLM_API_KEY",
+    "MINIMAX_API_KEY",
+    "MINIMAX_API_TOKEN",
+    "MINIMAX_CN_API_KEY",
+    "SYNTHETIC_API_KEY",
+    "PI_CODING_AGENT_DIR",
+    "COMMAND_CODE_API_KEY",
+    "DEEPSEEK_API_KEY",
+    "DEEPSEEK_INITIAL_BALANCE",
+    "OLLAMA_API_KEY",
+    "OLLAMA_HOST",
+    "OLLAMA_SESSION_COOKIE",
+    "OLLAMA_COOKIE",
+    "NEURALWATT_API_KEY",
+    "FIREWORKS_API_KEY",
+];
+
+const FIRECTL_TIMEOUT_SECS: u64 = 15;
+const FIRECTL_POLL_INTERVAL_MS: u64 = 50;
 
 fn last_non_empty_trimmed_line(text: &str) -> Option<String> {
     text.lines()
@@ -137,76 +155,6 @@ fn read_command_stdout(program: &str, args: &[&str]) -> Option<String> {
 fn read_env_value_via_command(program: &str, args: &[&str]) -> Option<String> {
     let stdout = read_command_stdout(program, args)?;
     sanitize_env_value(&stdout)
-}
-
-fn current_macos_keychain_account_from_user_env(user_env: Option<String>) -> String {
-    user_env
-        .and_then(|value| {
-            let trimmed = value.trim();
-            if trimmed.is_empty() {
-                None
-            } else {
-                Some(trimmed.to_string())
-            }
-        })
-        .or_else(|| read_env_value_via_command("id", &["-un"]))
-        .unwrap_or_else(|| "openusage-user".to_string())
-}
-
-fn current_macos_keychain_account() -> String {
-    current_macos_keychain_account_from_user_env(read_env_from_process("USER"))
-}
-
-#[cfg(any(target_os = "macos", test))]
-fn keychain_find_generic_password_args(service: &str) -> Vec<OsString> {
-    vec![
-        OsString::from("find-generic-password"),
-        OsString::from("-s"),
-        OsString::from(service),
-        OsString::from("-w"),
-    ]
-}
-
-#[cfg(any(target_os = "macos", test))]
-fn keychain_find_generic_password_args_for_account(service: &str, account: &str) -> Vec<OsString> {
-    vec![
-        OsString::from("find-generic-password"),
-        OsString::from("-a"),
-        OsString::from(account),
-        OsString::from("-s"),
-        OsString::from(service),
-        OsString::from("-w"),
-    ]
-}
-
-#[cfg(any(target_os = "macos", test))]
-fn keychain_add_generic_password_args(service: &str, value: &str) -> Vec<OsString> {
-    vec![
-        OsString::from("add-generic-password"),
-        OsString::from("-U"),
-        OsString::from("-s"),
-        OsString::from(service),
-        OsString::from("-w"),
-        OsString::from(value),
-    ]
-}
-
-#[cfg(any(target_os = "macos", test))]
-fn keychain_add_generic_password_args_for_account(
-    service: &str,
-    account: &str,
-    value: &str,
-) -> Vec<OsString> {
-    vec![
-        OsString::from("add-generic-password"),
-        OsString::from("-U"),
-        OsString::from("-a"),
-        OsString::from(account),
-        OsString::from("-s"),
-        OsString::from(service),
-        OsString::from("-w"),
-        OsString::from(value),
-    ]
 }
 
 fn terminal_env_cache() -> &'static Mutex<HashMap<String, Option<String>>> {
@@ -288,6 +236,72 @@ fn resolve_env_value(name: &str) -> Option<String> {
     resolved
 }
 
+fn current_macos_keychain_account_from_user_env(user_env: Option<String>) -> String {
+    user_env
+        .and_then(|value| {
+            let trimmed = value.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed.to_string())
+            }
+        })
+        .or_else(|| read_env_value_via_command("id", &["-un"]))
+        .unwrap_or_else(|| "openusage-user".to_string())
+}
+
+fn current_macos_keychain_account() -> String {
+    current_macos_keychain_account_from_user_env(read_env_from_process("USER"))
+}
+
+fn keychain_find_generic_password_args(service: &str) -> Vec<OsString> {
+    vec![
+        OsString::from("find-generic-password"),
+        OsString::from("-s"),
+        OsString::from(service),
+        OsString::from("-w"),
+    ]
+}
+
+fn keychain_find_generic_password_args_for_account(service: &str, account: &str) -> Vec<OsString> {
+    vec![
+        OsString::from("find-generic-password"),
+        OsString::from("-a"),
+        OsString::from(account),
+        OsString::from("-s"),
+        OsString::from(service),
+        OsString::from("-w"),
+    ]
+}
+
+fn keychain_add_generic_password_args(service: &str, value: &str) -> Vec<OsString> {
+    vec![
+        OsString::from("add-generic-password"),
+        OsString::from("-U"),
+        OsString::from("-s"),
+        OsString::from(service),
+        OsString::from("-w"),
+        OsString::from(value),
+    ]
+}
+
+fn keychain_add_generic_password_args_for_account(
+    service: &str,
+    account: &str,
+    value: &str,
+) -> Vec<OsString> {
+    vec![
+        OsString::from("add-generic-password"),
+        OsString::from("-U"),
+        OsString::from("-a"),
+        OsString::from(account),
+        OsString::from("-s"),
+        OsString::from(service),
+        OsString::from("-w"),
+        OsString::from(value),
+    ]
+}
+
 /// Redact sensitive value to first4...last4 format (UTF-8 safe)
 fn redact_value(value: &str) -> String {
     let chars: Vec<char> = value.chars().collect();
@@ -309,6 +323,11 @@ fn redact_value(value: &str) -> String {
 
 /// Redact sensitive query parameters in URL
 fn redact_url(url: &str) -> String {
+    static ACCOUNT_PATH_PATTERN: OnceLock<regex_lite::Regex> = OnceLock::new();
+    let account_path_pattern = ACCOUNT_PATH_PATTERN.get_or_init(|| {
+        regex_lite::Regex::new(r"(?P<prefix>/accounts/)(?P<value>[^/?#]+)")
+            .expect("valid account path regex")
+    });
     let sensitive_params = [
         "key",
         "api_key",
@@ -332,6 +351,12 @@ fn redact_url(url: &str) -> String {
         "login",
     ];
 
+    let url = account_path_pattern
+        .replace_all(url, |caps: &regex_lite::Captures| {
+            format!("{}{}", &caps["prefix"], redact_value(&caps["value"]))
+        })
+        .to_string();
+
     if let Some(query_start) = url.find('?') {
         let (base, query) = url.split_at(query_start + 1);
         let redacted_params: Vec<String> = query
@@ -354,7 +379,7 @@ fn redact_url(url: &str) -> String {
             .collect();
         format!("{}{}", base, redacted_params.join("&"))
     } else {
-        url.to_string()
+        url
     }
 }
 
@@ -381,6 +406,14 @@ fn redact_body(body: &str) -> String {
             redact_value(key)
         })
         .to_string();
+
+    if let Ok(devin_session_re) = regex_lite::Regex::new(r#"devin-session-token\$[^\s"',}\]]+"#) {
+        result = devin_session_re
+            .replace_all(&result, |caps: &regex_lite::Captures| {
+                redact_value(&caps[0])
+            })
+            .to_string();
+    }
 
     // Redact JSON values for sensitive keys
     let sensitive_keys = [
@@ -409,6 +442,10 @@ fn redact_body(body: &str) -> String {
         "accountId",
         "team_id",
         "teamId",
+        "org_id",
+        "orgId",
+        "account_display_name",
+        "accountDisplayName",
         "payment_id",
         "paymentId",
         "profile_arn",
@@ -430,6 +467,17 @@ fn redact_body(body: &str) -> String {
         }
     }
 
+    // Redact email addresses even in HTML/text responses.
+    if let Ok(email_re) =
+        regex_lite::Regex::new(r"[A-Za-z0-9._%+-]+@(?:[A-Za-z0-9-]+\.)+[A-Za-z]{2,}")
+    {
+        result = email_re
+            .replace_all(&result, |caps: &regex_lite::Captures| {
+                redact_value(&caps[0])
+            })
+            .to_string();
+    }
+
     if let Ok(path_re) =
         regex_lite::Regex::new(r#"(/(?:Users|home|opt|private|var|tmp|Applications)/[^\s"')]+)"#)
     {
@@ -439,9 +487,18 @@ fn redact_body(body: &str) -> String {
     result
 }
 
-/// Lightweight redaction for log messages.
-pub(crate) fn redact_log_message(msg: &str) -> String {
+/// Lightweight redaction for plugin log messages (JWT + API key patterns only).
+pub fn redact_log_message(msg: &str) -> String {
     let mut result = msg.to_string();
+    if let Ok(email_re) =
+        regex_lite::Regex::new(r"[A-Za-z0-9._%+-]+@(?:[A-Za-z0-9-]+\.)+[A-Za-z]{2,}")
+    {
+        result = email_re
+            .replace_all(&result, |caps: &regex_lite::Captures| {
+                redact_value(&caps[0])
+            })
+            .to_string();
+    }
     if let Ok(jwt_re) = regex_lite::Regex::new(r"eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+")
     {
         result = jwt_re
@@ -452,6 +509,13 @@ pub(crate) fn redact_log_message(msg: &str) -> String {
     }
     if let Ok(api_re) = regex_lite::Regex::new(r#"(sk-|pk-|api_|key_|secret_)[A-Za-z0-9_-]{12,}"#) {
         result = api_re
+            .replace_all(&result, |caps: &regex_lite::Captures| {
+                redact_value(&caps[0])
+            })
+            .to_string();
+    }
+    if let Ok(devin_session_re) = regex_lite::Regex::new(r#"devin-session-token\$[^\s"',}\]]+"#) {
+        result = devin_session_re
             .replace_all(&result, |caps: &regex_lite::Captures| {
                 redact_value(&caps[0])
             })
@@ -563,16 +627,19 @@ fn encrypt_aes_256_gcm_envelope(plaintext: &str, key_b64: &str) -> Result<String
     ))
 }
 
-#[cfg(test)]
-pub(crate) fn inject_host_api<'js>(
+pub fn inject_host_api<'js>(
     ctx: &Ctx<'js>,
-    plugin_id: &str,
+    base_plugin_id: &str,
+    instance_id: &str,
+    account: Option<&ProviderAccountContext>,
     app_data_dir: &PathBuf,
     app_version: &str,
 ) -> rquickjs::Result<()> {
     inject_host_api_with_deadline(
         ctx,
-        plugin_id,
+        base_plugin_id,
+        instance_id,
+        account,
         app_data_dir,
         app_version,
         ProbeDeadline::none(),
@@ -581,7 +648,9 @@ pub(crate) fn inject_host_api<'js>(
 
 pub(crate) fn inject_host_api_with_deadline<'js>(
     ctx: &Ctx<'js>,
-    plugin_id: &str,
+    base_plugin_id: &str,
+    instance_id: &str,
+    account: Option<&ProviderAccountContext>,
     app_data_dir: &PathBuf,
     app_version: &str,
     deadline: ProbeDeadline,
@@ -595,11 +664,11 @@ pub(crate) fn inject_host_api_with_deadline<'js>(
     app_obj.set("version", app_version)?;
     app_obj.set("platform", std::env::consts::OS)?;
     app_obj.set("appDataDir", app_data_dir.to_string_lossy().to_string())?;
-    let plugin_data_dir = app_data_dir.join("plugins_data").join(plugin_id);
+    let plugin_data_dir = app_data_dir.join("plugins_data").join(instance_id);
     if let Err(err) = std::fs::create_dir_all(&plugin_data_dir) {
         log::warn!(
             "[plugin:{}] failed to create plugin data dir: {}",
-            plugin_id,
+            instance_id,
             err
         );
     }
@@ -609,16 +678,35 @@ pub(crate) fn inject_host_api_with_deadline<'js>(
     )?;
     probe_ctx.set("app", app_obj)?;
 
+    let account_obj = Object::new(ctx.clone())?;
+    account_obj.set("instanceId", instance_id)?;
+    account_obj.set("baseProviderId", base_plugin_id)?;
+    account_obj.set("label", account.map(|a| a.label.as_str()).unwrap_or(""))?;
+    probe_ctx.set("account", account_obj)?;
+
     let host = Object::new(ctx.clone())?;
-    inject_log(ctx, &host, plugin_id)?;
+    let host_account_obj = Object::new(ctx.clone())?;
+    host_account_obj.set("instanceId", instance_id)?;
+    host_account_obj.set("baseProviderId", base_plugin_id)?;
+    host_account_obj.set("label", account.map(|a| a.label.as_str()).unwrap_or(""))?;
+    host.set("account", host_account_obj)?;
+    inject_log(ctx, &host, instance_id)?;
     inject_fs(ctx, &host)?;
+    inject_cursor_paths(ctx, &host, base_plugin_id)?;
     inject_crypto(ctx, &host)?;
-    inject_env(ctx, &host, plugin_id)?;
-    inject_http(ctx, &host, plugin_id, deadline)?;
-    inject_keychain(ctx, &host, plugin_id)?;
+    inject_env(ctx, &host, base_plugin_id)?;
+    inject_http(ctx, &host, instance_id, deadline)?;
+    inject_credentials(ctx, &host, account)?;
+    inject_keychain(ctx, &host, instance_id)?;
     inject_sqlite(ctx, &host)?;
-    inject_ls(ctx, &host, plugin_id)?;
-    inject_ccusage(ctx, &host, plugin_id, deadline)?;
+    inject_ls(ctx, &host, base_plugin_id)?;
+    inject_ccusage(ctx, &host, base_plugin_id, deadline)?;
+    inject_usage_daily(ctx, &host, instance_id, app_data_dir)?;
+    inject_cursor_logs(ctx, &host, base_plugin_id, deadline)?;
+    inject_claude_logs(ctx, &host, deadline)?;
+    inject_codex_logs(ctx, &host, deadline)?;
+    inject_cursor_usage_export(ctx, &host, deadline)?;
+    inject_fireworks(ctx, &host, base_plugin_id)?;
 
     probe_ctx.set("host", host)?;
     globals.set("__openusage_ctx", probe_ctx)?;
@@ -657,8 +745,228 @@ fn inject_log<'js>(ctx: &Ctx<'js>, host: &Object<'js>, plugin_id: &str) -> rquic
     Ok(())
 }
 
+fn home_dir() -> Option<std::path::PathBuf> {
+    dirs::home_dir()
+        .or_else(|| std::env::var_os("HOME").map(std::path::PathBuf::from))
+        .or_else(|| {
+            #[cfg(windows)]
+            {
+                std::env::var_os("USERPROFILE").map(std::path::PathBuf::from)
+            }
+            #[cfg(all(unix, not(windows)))]
+            {
+                let uid = users::get_current_uid();
+                users::get_user_by_uid(uid).map(|user| user.home_dir().to_path_buf())
+            }
+            #[cfg(not(any(windows, unix)))]
+            {
+                None
+            }
+        })
+}
+
+/// Tilde paths for VS Code–style app data under Linux XDG, macOS Library, and Windows Roaming.
+fn app_support_path_candidates(relative: &str) -> Vec<String> {
+    let rel = relative.trim_start_matches(['/', '\\']);
+    vec![
+        format!("~/.config/{rel}"),
+        format!("~/Library/Application Support/{rel}"),
+        format!("~/AppData/Roaming/{rel}"),
+    ]
+}
+
+fn first_existing_path(paths: &[String]) -> Option<String> {
+    for path in paths {
+        let expanded = expand_path(path);
+        if std::path::Path::new(&expanded).exists() {
+            return Some(path.clone());
+        }
+    }
+    None
+}
+
+fn first_existing_app_support_path(relative: &str) -> Option<String> {
+    first_existing_path(&app_support_path_candidates(relative))
+}
+
+#[cfg(target_os = "linux")]
+fn dbus_session_bus_address() -> Option<String> {
+    if let Ok(addr) = std::env::var("DBUS_SESSION_BUS_ADDRESS") {
+        let trimmed = addr.trim();
+        if !trimmed.is_empty() {
+            return Some(trimmed.to_string());
+        }
+    }
+    let uid = users::get_current_uid();
+    let bus_path = format!("/run/user/{uid}/bus");
+    if std::path::Path::new(&bus_path).exists() {
+        return Some(format!("unix:path={bus_path}"));
+    }
+    None
+}
+
+#[cfg(target_os = "linux")]
+fn read_linux_secret_tool_password(service: &str, account: Option<&str>) -> Result<String, String> {
+    let secret_tool = ["secret-tool", "/usr/bin/secret-tool"]
+        .into_iter()
+        .find(|path| std::path::Path::new(path).is_file());
+    let secret_tool = secret_tool.ok_or_else(|| {
+        "secret-tool not installed (install libsecret-tools for Linux keyring access)".to_string()
+    })?;
+
+    let mut cmd = std::process::Command::new(secret_tool);
+    cmd.arg("lookup").arg("service").arg(service);
+    if let Some(user) = account.map(str::trim).filter(|a| !a.is_empty()) {
+        cmd.arg("username").arg(user);
+    }
+    if let Some(addr) = dbus_session_bus_address() {
+        cmd.env("DBUS_SESSION_BUS_ADDRESS", addr);
+    }
+
+    let output = cmd
+        .output()
+        .map_err(|e| format!("secret-tool failed: {e}"))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let first_line = stderr.lines().next().unwrap_or("").trim();
+        return Err(if first_line.is_empty() {
+            "secret-tool lookup returned no entry".to_string()
+        } else {
+            first_line.to_string()
+        });
+    }
+    let password = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if password.is_empty() {
+        return Err("secret-tool lookup returned empty secret".to_string());
+    }
+    Ok(password)
+}
+
+/// Windows Credential Manager target for [zalando/go-keyring] (`agy`, Antigravity CLI): `service:username`.
+/// The Rust `keyring` crate default is `username.service` instead — try go-keyring layout first.
+#[cfg(target_os = "windows")]
+fn windows_go_keyring_target(service: &str, user: &str) -> String {
+    format!("{service}:{user}")
+}
+
+#[cfg(target_os = "windows")]
+fn read_windows_keyring_password(service: &str, account: Option<&str>) -> Result<String, String> {
+    let user = account
+        .map(str::trim)
+        .filter(|a| !a.is_empty())
+        .unwrap_or("");
+    let mut errors: Vec<String> = Vec::new();
+
+    if !user.is_empty() {
+        let go_target = windows_go_keyring_target(service, user);
+        match keyring::Entry::new_with_target(&go_target, service, user) {
+            Ok(entry) => match entry.get_password() {
+                Ok(password) => return Ok(password),
+                Err(e) => errors.push(format!("go-keyring target {go_target}: {e}")),
+            },
+            Err(e) => errors.push(format!("go-keyring target {go_target}: {e}")),
+        }
+    }
+
+    match keyring::Entry::new(service, user) {
+        Ok(entry) => match entry.get_password() {
+            Ok(password) => return Ok(password),
+            Err(e) => errors.push(format!("keyring crate default: {e}")),
+        },
+        Err(e) => errors.push(format!("keyring crate default: {e}")),
+    }
+
+    Err(errors.join("; "))
+}
+
+#[cfg(target_os = "windows")]
+fn write_windows_keyring_password(
+    service: &str,
+    account: Option<&str>,
+    value: &str,
+) -> Result<(), String> {
+    let user = account
+        .map(str::trim)
+        .filter(|a| !a.is_empty())
+        .unwrap_or("");
+    if !user.is_empty() {
+        let go_target = windows_go_keyring_target(service, user);
+        if let Ok(entry) = keyring::Entry::new_with_target(&go_target, service, user) {
+            if entry.set_password(value).is_ok() {
+                return Ok(());
+            }
+        }
+    }
+    keyring::Entry::new(service, user)
+        .map_err(|e| e.to_string())?
+        .set_password(value)
+        .map_err(|e| e.to_string())
+}
+
+/// Reads a generic password from the platform store (Keychain, Secret Service, Credential Manager).
+/// Matches [zalando/go-keyring](https://github.com/zalando/go-keyring) (`service` + `username` on Linux).
+fn write_platform_keyring_password(
+    service: &str,
+    account: Option<&str>,
+    value: &str,
+) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        return write_windows_keyring_password(service, account, value);
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let user = account
+            .map(str::trim)
+            .filter(|a| !a.is_empty())
+            .unwrap_or("");
+        keyring::Entry::new(service, user)
+            .map_err(|e| e.to_string())?
+            .set_password(value)
+            .map_err(|e| e.to_string())
+    }
+}
+
+fn read_platform_keyring_password(service: &str, account: Option<&str>) -> Result<String, String> {
+    #[cfg(target_os = "windows")]
+    {
+        return read_windows_keyring_password(service, account);
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        let user = account
+            .map(str::trim)
+            .filter(|a| !a.is_empty())
+            .unwrap_or("");
+        let keyring_err = match keyring::Entry::new(service, user) {
+            Ok(entry) => match entry.get_password() {
+                Ok(password) => return Ok(password),
+                Err(e) => e.to_string(),
+            },
+            Err(e) => e.to_string(),
+        };
+
+        #[cfg(target_os = "linux")]
+        {
+            return read_linux_secret_tool_password(service, account)
+                .map_err(|secret_tool_err| format!("{keyring_err}; {secret_tool_err}"));
+        }
+
+        #[cfg(not(target_os = "linux"))]
+        {
+            let _ = keyring_err;
+            Err("keyring read failed".to_string())
+        }
+    }
+}
+
 fn inject_fs<'js>(ctx: &Ctx<'js>, host: &Object<'js>) -> rquickjs::Result<()> {
     let fs_obj = Object::new(ctx.clone())?;
+
+    if let Some(home) = home_dir() {
+        fs_obj.set("homeDir", home.to_string_lossy().to_string())?;
+    }
 
     fs_obj.set(
         "exists",
@@ -673,6 +981,7 @@ fn inject_fs<'js>(ctx: &Ctx<'js>, host: &Object<'js>) -> rquickjs::Result<()> {
         Function::new(
             ctx.clone(),
             move |ctx_inner: Ctx<'_>, path: String| -> rquickjs::Result<String> {
+                reject_path_traversal(&ctx_inner, &path)?;
                 let expanded = expand_path(&path);
                 std::fs::read_to_string(&expanded)
                     .map_err(|e| Exception::throw_message(&ctx_inner, &e.to_string()))
@@ -685,6 +994,7 @@ fn inject_fs<'js>(ctx: &Ctx<'js>, host: &Object<'js>) -> rquickjs::Result<()> {
         Function::new(
             ctx.clone(),
             move |ctx_inner: Ctx<'_>, path: String, content: String| -> rquickjs::Result<()> {
+                reject_path_traversal(&ctx_inner, &path)?;
                 let expanded = expand_path(&path);
                 std::fs::write(&expanded, &content)
                     .map_err(|e| Exception::throw_message(&ctx_inner, &e.to_string()))
@@ -697,6 +1007,7 @@ fn inject_fs<'js>(ctx: &Ctx<'js>, host: &Object<'js>) -> rquickjs::Result<()> {
         Function::new(
             ctx.clone(),
             move |ctx_inner: Ctx<'_>, path: String| -> rquickjs::Result<Vec<String>> {
+                reject_path_traversal(&ctx_inner, &path)?;
                 let expanded = expand_path(&path);
                 let entries = std::fs::read_dir(&expanded)
                     .map_err(|e| Exception::throw_message(&ctx_inner, &e.to_string()))?;
@@ -719,7 +1030,39 @@ fn inject_fs<'js>(ctx: &Ctx<'js>, host: &Object<'js>) -> rquickjs::Result<()> {
         )?,
     )?;
 
+    fs_obj.set(
+        "firstExisting",
+        Function::new(ctx.clone(), move |paths: Vec<String>| -> Option<String> {
+            first_existing_path(&paths)
+        })?,
+    )?;
+
+    fs_obj.set(
+        "firstExistingAppSupport",
+        Function::new(ctx.clone(), move |relative: String| -> Option<String> {
+            first_existing_app_support_path(&relative)
+        })?,
+    )?;
+
     host.set("fs", fs_obj)?;
+    Ok(())
+}
+
+fn inject_cursor_paths<'js>(
+    ctx: &Ctx<'js>,
+    host: &Object<'js>,
+    base_plugin_id: &str,
+) -> rquickjs::Result<()> {
+    let paths_obj = Object::new(ctx.clone())?;
+    let plugin_id = base_plugin_id.to_string();
+    paths_obj.set(
+        "resolveStateDb",
+        Function::new(ctx.clone(), move |_ctx: Ctx<'_>, ()| -> Option<String> {
+            crate::cursor_paths::resolve_cursor_state_db_for_plugin_id(&plugin_id)
+                .map(|p| p.to_string_lossy().to_string())
+        })?,
+    )?;
+    host.set("cursorPaths", paths_obj)?;
     Ok(())
 }
 
@@ -789,6 +1132,67 @@ fn inject_env<'js>(ctx: &Ctx<'js>, host: &Object<'js>, _plugin_id: &str) -> rqui
     Ok(())
 }
 
+fn inject_credentials<'js>(
+    ctx: &Ctx<'js>,
+    host: &Object<'js>,
+    account: Option<&ProviderAccountContext>,
+) -> rquickjs::Result<()> {
+    let credentials_obj = Object::new(ctx.clone())?;
+    let credential_json = account
+        .and_then(|account| account.credential.as_ref())
+        .and_then(|credential| serde_json::to_string(credential).ok());
+    credentials_obj.set(
+        "get",
+        Function::new(ctx.clone(), move || -> Option<String> {
+            credential_json.clone()
+        })?,
+    )?;
+
+    let store_path = account.and_then(|account| account.store_path.clone());
+    let instance_id = account.map(|account| account.instance_id.clone());
+    credentials_obj.set(
+        "update",
+        Function::new(
+            ctx.clone(),
+            move |ctx_inner: Ctx<'_>, update_json: String| -> rquickjs::Result<Option<String>> {
+                let Some(path) = store_path.as_ref() else {
+                    return Ok(None);
+                };
+                let Some(id) = instance_id.as_ref() else {
+                    return Ok(None);
+                };
+                let update: ProviderCredential =
+                    serde_json::from_str(&update_json).map_err(|e| {
+                        Exception::throw_message(
+                            &ctx_inner,
+                            &format!("invalid credential update: {}", e),
+                        )
+                    })?;
+                let updated = provider_accounts::update_credential_at_path(path, id, update)
+                    .map_err(|e| {
+                        Exception::throw_message(
+                            &ctx_inner,
+                            &format!("credential update failed: {}", e),
+                        )
+                    })?;
+                match updated {
+                    Some(credential) => serde_json::to_string(&credential)
+                        .map(Some)
+                        .map_err(|e| Exception::throw_message(&ctx_inner, &e.to_string())),
+                    None => Ok(None),
+                }
+            },
+        )?,
+    )?;
+
+    host.set("credentials", credentials_obj)?;
+    Ok(())
+}
+
+fn probe_timeout_error<'js>(ctx: &Ctx<'js>) -> rquickjs::Error {
+    Exception::throw_message(ctx, "probe timed out")
+}
+
 fn inject_http<'js>(
     ctx: &Ctx<'js>,
     host: &Object<'js>,
@@ -808,7 +1212,7 @@ fn inject_http<'js>(
                 })?;
 
                 if deadline.has_elapsed() {
-                    return Err(Exception::throw_message(&ctx_inner, "probe timed out"));
+                    return Err(probe_timeout_error(&ctx_inner));
                 }
 
                 let method_str = req.method.as_deref().unwrap_or("GET");
@@ -835,6 +1239,27 @@ fn inject_http<'js>(
                     }
                 }
 
+                #[cfg(test)]
+                {
+                    let lock = HTTP_MOCK_STATE.get_or_init(|| Mutex::new(None));
+                    let mut guard = lock.lock().unwrap();
+                    if let Some(state) = guard.as_mut() {
+                        state.requests.push(CapturedHttpRequest {
+                            url: req.url.clone(),
+                            method: method_str.to_string(),
+                            headers: req.headers.clone().unwrap_or_default(),
+                            body_text: req.body_text.clone(),
+                        });
+                        let resp = state.responses.pop_front().unwrap_or(HttpRespParams {
+                            status: 200,
+                            headers: std::collections::HashMap::new(),
+                            body_text: "{}".to_string(),
+                        });
+                        return serde_json::to_string(&resp)
+                            .map_err(|e| Exception::throw_message(&ctx_inner, &e.to_string()));
+                    }
+                }
+
                 let timeout_ms = req.timeout_ms.unwrap_or(10_000);
                 let Some(timeout) = deadline.clamp_duration(Duration::from_millis(timeout_ms))
                 else {
@@ -844,15 +1269,9 @@ fn inject_http<'js>(
                     .timeout(timeout)
                     .connect_timeout(timeout)
                     .redirect(reqwest::redirect::Policy::none());
-
-                // Apply pre-resolved proxy (localhost bypass already configured)
-                if let Some(resolved) = crate::config::get_resolved_proxy() {
+                if let Some(resolved) = crate::proxy_config::get_resolved_proxy() {
                     builder = builder.proxy(resolved.proxy.clone());
-                    log::debug!("[http] proxy active");
-                } else {
-                    log::debug!("[http] proxy not used");
                 }
-
                 if req.dangerously_ignore_tls.unwrap_or(false) {
                     builder = builder.danger_accept_invalid_certs(true);
                 }
@@ -993,6 +1412,12 @@ pub fn inject_utils(ctx: &rquickjs::Ctx<'_>) -> rquickjs::Result<()> {
                     if (opts.color) line.color = opts.color;
                     if (opts.subtitle) line.subtitle = opts.subtitle;
                     return line;
+                },
+                barChart: function(opts) {
+                    var line = { type: "barChart", label: opts.label, points: opts.points || [] };
+                    if (opts.note) line.note = opts.note;
+                    if (opts.color) line.color = opts.color;
+                    return line;
                 }
             };
 
@@ -1060,6 +1485,47 @@ pub fn inject_utils(ctx: &rquickjs::Ctx<'_>) -> rquickjs::Result<()> {
                 },
                 isAuthStatus: function(status) {
                     return status === 401 || status === 403;
+                },
+                readProviderCredential: function() {
+                    try {
+                        if (!ctx.host.credentials || typeof ctx.host.credentials.get !== "function") return null;
+                        var raw = ctx.host.credentials.get();
+                        if (!raw) return null;
+                        var credential = ctx.util.tryParseJson(String(raw));
+                        if (!credential) return null;
+                        var accessToken = String(credential.accessToken || credential.sessionKey || "").trim();
+                        var refreshToken = String(credential.refreshToken || "").trim();
+                        var sessionKey = credential.sessionKey ? String(credential.sessionKey).trim() : "";
+                        if (!accessToken && !refreshToken) return null;
+                        return {
+                            accessToken: accessToken || null,
+                            refreshToken: refreshToken || null,
+                            sessionKey: sessionKey || null,
+                            expiresAt: typeof credential.expiresAt === "number" ? credential.expiresAt : null
+                        };
+                    } catch (e) {
+                        return null;
+                    }
+                },
+                writeProviderCredential: function(partial) {
+                    try {
+                        if (!ctx.host.credentials || typeof ctx.host.credentials.update !== "function") return false;
+                        var current = ctx.util.readProviderCredential() || {};
+                        var update = Object.assign({}, current, partial || {});
+                        ctx.host.credentials.update(JSON.stringify({
+                            accessToken: update.accessToken || null,
+                            refreshToken: update.refreshToken || null,
+                            sessionKey: update.sessionKey || null,
+                            expiresAt: update.expiresAt || null
+                        }));
+                        return true;
+                    } catch (e) {
+                        return false;
+                    }
+                },
+                providerApiKey: function() {
+                    var credential = ctx.util.readProviderCredential();
+                    return credential && credential.accessToken ? credential.accessToken : null;
                 },
                 retryOnceOnAuth: function(opts) {
                     var resp = opts.request();
@@ -1268,6 +1734,51 @@ struct HttpRespParams {
     body_text: String,
 }
 
+#[cfg(test)]
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct CapturedHttpRequest {
+    pub url: String,
+    pub method: String,
+    pub headers: std::collections::HashMap<String, String>,
+    pub body_text: Option<String>,
+}
+
+#[cfg(test)]
+struct HttpMockState {
+    responses: VecDeque<HttpRespParams>,
+    requests: Vec<CapturedHttpRequest>,
+}
+
+#[cfg(test)]
+static HTTP_MOCK_STATE: OnceLock<Mutex<Option<HttpMockState>>> = OnceLock::new();
+
+#[cfg(test)]
+pub(crate) fn install_http_mock(responses: Vec<(u16, &str)>) {
+    let state = HttpMockState {
+        responses: responses
+            .into_iter()
+            .map(|(status, body)| HttpRespParams {
+                status,
+                headers: std::collections::HashMap::new(),
+                body_text: body.to_string(),
+            })
+            .collect(),
+        requests: Vec::new(),
+    };
+    let lock = HTTP_MOCK_STATE.get_or_init(|| Mutex::new(None));
+    *lock.lock().unwrap() = Some(state);
+}
+
+#[cfg(test)]
+pub(crate) fn take_http_mock_requests() -> Vec<CapturedHttpRequest> {
+    let lock = HTTP_MOCK_STATE.get_or_init(|| Mutex::new(None));
+    lock.lock()
+        .unwrap()
+        .take()
+        .map(|state| state.requests)
+        .unwrap_or_default()
+}
+
 // --- Language Server Discovery ---
 
 #[derive(serde::Deserialize)]
@@ -1310,178 +1821,190 @@ fn inject_ls<'js>(ctx: &Ctx<'js>, host: &Object<'js>, plugin_id: &str) -> rquick
                     opts.markers
                 );
 
-                let ps_output = match std::process::Command::new("/bin/ps")
-                    .args(["-ax", "-o", "pid=,command="])
-                    .output()
+                // Windows: no ps command; plugins fall back to SQLite/Cloud API
+                #[cfg(windows)]
+                return Ok("null".to_string());
+
+                #[cfg(not(windows))]
                 {
-                    Ok(o) => o,
-                    Err(e) => {
-                        log::warn!("[plugin:{}] ps failed: {}", pid, e);
-                        return Ok("null".to_string());
-                    }
-                };
-
-                if !ps_output.status.success() {
-                    log::warn!("[plugin:{}] ps returned non-zero", pid);
-                    return Ok("null".to_string());
-                }
-
-                let ps_stdout = String::from_utf8_lossy(&ps_output.stdout);
-                let process_name_lower = opts.process_name.to_lowercase();
-                let markers_lower: Vec<String> =
-                    opts.markers.iter().map(|m| m.to_lowercase()).collect();
-
-                // Find the target process. Marker patterns are Codeium-derived.
-                // Matching priority:
-                //   1. Exact --ide_name / --app_data_dir flag value (prevents
-                //      "windsurf" matching "windsurf-next")
-                //   2. Path substring (/<marker>/) as fallback when no flags found
-                let mut found: Option<(i32, String)> = None;
-
-                for line in ps_stdout.lines() {
-                    let trimmed = line.trim();
-                    if trimmed.is_empty() {
-                        continue;
-                    }
-
-                    let mut parts = trimmed.splitn(2, char::is_whitespace);
-                    let pid_str = match parts.next() {
-                        Some(s) => s.trim(),
-                        None => continue,
+                    // Use ps -e on Linux (GNU ps); -ax on macOS/BSD
+                    let (ps_path, ps_args): (&str, &[&str]) = if std::env::consts::OS == "linux" {
+                        ("ps", &["-e", "-o", "pid=,args="][..])
+                    } else {
+                        ("/bin/ps", &["-ax", "-o", "pid=,command="][..])
                     };
-                    let command = match parts.next() {
-                        Some(s) => s.trim(),
-                        None => continue,
-                    };
-
-                    let command_lower = command.to_lowercase();
-
-                    if !command_lower.contains(&process_name_lower) {
-                        continue;
-                    }
-
-                    let ide_name = ls_extract_flag(command, "--ide_name").map(|v| v.to_lowercase());
-                    let app_data =
-                        ls_extract_flag(command, "--app_data_dir").map(|v| v.to_lowercase());
-
-                    let has_marker = markers_lower.iter().any(|m| {
-                        // Prefer exact flag match; skip path fallback when
-                        // a distinguishing flag exists.
-                        if let Some(ref name) = ide_name {
-                            return *name == *m;
-                        }
-                        if let Some(ref dir) = app_data {
-                            return *dir == *m;
-                        }
-                        // Fallback: path substring
-                        command_lower.contains(&format!("/{}/", m))
-                    });
-                    if !has_marker {
-                        continue;
-                    }
-
-                    if let Ok(p) = pid_str.parse::<i32>() {
-                        found = Some((p, command.to_string()));
-                        break;
-                    }
-                }
-
-                let (process_pid, command) = match found {
-                    Some(pair) => pair,
-                    None => {
-                        log::info!("[plugin:{}] LS process not found", pid);
-                        return Ok("null".to_string());
-                    }
-                };
-
-                // Extract CSRF token
-                let csrf = match ls_extract_flag(&command, &opts.csrf_flag) {
-                    Some(c) => c,
-                    None => {
-                        log::warn!("[plugin:{}] CSRF token not found in process args", pid);
-                        return Ok("null".to_string());
-                    }
-                };
-
-                // Extract extension port (optional)
-                let extension_port = opts.port_flag.as_ref().and_then(|flag| {
-                    ls_extract_flag(&command, flag).and_then(|v| v.parse::<i32>().ok())
-                });
-
-                // Extract extra flags (optional)
-                let mut extra = std::collections::HashMap::new();
-                if let Some(ref flags) = opts.extra_flags {
-                    for flag in flags {
-                        if let Some(val) = ls_extract_flag(&command, flag) {
-                            // Use flag name without leading dashes as key
-                            let key = flag.trim_start_matches('-').to_string();
-                            extra.insert(key, val);
-                        }
-                    }
-                }
-
-                // Find lsof binary
-                let lsof_path = ["/usr/sbin/lsof", "/usr/bin/lsof"]
-                    .iter()
-                    .find(|p| std::path::Path::new(p).exists())
-                    .copied();
-
-                let ports = if let Some(lsof) = lsof_path {
-                    match std::process::Command::new(lsof)
-                        .args([
-                            "-nP",
-                            "-iTCP",
-                            "-sTCP:LISTEN",
-                            "-a",
-                            "-p",
-                            &process_pid.to_string(),
-                        ])
-                        .output()
+                    let ps_output = match std::process::Command::new(ps_path).args(ps_args).output()
                     {
-                        Ok(o) if o.status.success() => {
-                            ls_parse_listening_ports(&String::from_utf8_lossy(&o.stdout))
-                        }
-                        Ok(_) => {
-                            log::warn!("[plugin:{}] lsof returned non-zero", pid);
-                            Vec::new()
-                        }
+                        Ok(o) => o,
                         Err(e) => {
-                            log::warn!("[plugin:{}] lsof failed: {}", pid, e);
-                            Vec::new()
+                            log::warn!("[plugin:{}] ps failed: {}", pid, e);
+                            return Ok("null".to_string());
+                        }
+                    };
+
+                    if !ps_output.status.success() {
+                        log::warn!("[plugin:{}] ps returned non-zero", pid);
+                        return Ok("null".to_string());
+                    }
+
+                    let ps_stdout = String::from_utf8_lossy(&ps_output.stdout);
+                    let process_name_lower = opts.process_name.to_lowercase();
+                    let markers_lower: Vec<String> =
+                        opts.markers.iter().map(|m| m.to_lowercase()).collect();
+
+                    // Find the target process. Marker patterns are Codeium-derived.
+                    // Matching priority:
+                    //   1. Exact --ide_name / --app_data_dir flag value (prevents
+                    //      "windsurf" matching "windsurf-next")
+                    //   2. Path substring (/<marker>/) as fallback when no flags found
+                    let mut found: Option<(i32, String)> = None;
+
+                    for line in ps_stdout.lines() {
+                        let trimmed = line.trim();
+                        if trimmed.is_empty() {
+                            continue;
+                        }
+
+                        let mut parts = trimmed.splitn(2, char::is_whitespace);
+                        let pid_str = match parts.next() {
+                            Some(s) => s.trim(),
+                            None => continue,
+                        };
+                        let command = match parts.next() {
+                            Some(s) => s.trim(),
+                            None => continue,
+                        };
+
+                        let command_lower = command.to_lowercase();
+
+                        if !command_lower.contains(&process_name_lower) {
+                            continue;
+                        }
+
+                        let ide_name =
+                            ls_extract_flag(command, "--ide_name").map(|v| v.to_lowercase());
+                        let app_data =
+                            ls_extract_flag(command, "--app_data_dir").map(|v| v.to_lowercase());
+
+                        let has_marker = markers_lower.iter().any(|m| {
+                            // Prefer exact flag match; skip path fallback when
+                            // a distinguishing flag exists.
+                            if let Some(ref name) = ide_name {
+                                return *name == *m;
+                            }
+                            if let Some(ref dir) = app_data {
+                                return *dir == *m;
+                            }
+                            // Fallback: path substring
+                            command_lower.contains(&format!("/{}/", m))
+                        });
+                        if !has_marker {
+                            continue;
+                        }
+
+                        if let Ok(p) = pid_str.parse::<i32>() {
+                            found = Some((p, command.to_string()));
+                            break;
                         }
                     }
-                } else {
-                    log::warn!("[plugin:{}] lsof not found", pid);
-                    Vec::new()
-                };
 
-                if ports.is_empty() && extension_port.is_none() {
-                    log::warn!(
-                        "[plugin:{}] no listening ports found for pid {}",
+                    let (process_pid, command) = match found {
+                        Some(pair) => pair,
+                        None => {
+                            log::info!("[plugin:{}] LS process not found", pid);
+                            return Ok("null".to_string());
+                        }
+                    };
+
+                    // Extract CSRF token
+                    let csrf = match ls_extract_flag(&command, &opts.csrf_flag) {
+                        Some(c) => c,
+                        None => {
+                            log::warn!("[plugin:{}] CSRF token not found in process args", pid);
+                            return Ok("null".to_string());
+                        }
+                    };
+
+                    // Extract extension port (optional)
+                    let extension_port = opts.port_flag.as_ref().and_then(|flag| {
+                        ls_extract_flag(&command, flag).and_then(|v| v.parse::<i32>().ok())
+                    });
+
+                    // Extract extra flags (optional)
+                    let mut extra = std::collections::HashMap::new();
+                    if let Some(ref flags) = opts.extra_flags {
+                        for flag in flags {
+                            if let Some(val) = ls_extract_flag(&command, flag) {
+                                // Use flag name without leading dashes as key
+                                let key = flag.trim_start_matches('-').to_string();
+                                extra.insert(key, val);
+                            }
+                        }
+                    }
+
+                    // Find lsof binary
+                    let lsof_path = ["/usr/sbin/lsof", "/usr/bin/lsof"]
+                        .iter()
+                        .find(|p| std::path::Path::new(p).exists())
+                        .copied();
+
+                    let ports = if let Some(lsof) = lsof_path {
+                        match std::process::Command::new(lsof)
+                            .args([
+                                "-nP",
+                                "-iTCP",
+                                "-sTCP:LISTEN",
+                                "-a",
+                                "-p",
+                                &process_pid.to_string(),
+                            ])
+                            .output()
+                        {
+                            Ok(o) if o.status.success() => {
+                                ls_parse_listening_ports(&String::from_utf8_lossy(&o.stdout))
+                            }
+                            Ok(_) => {
+                                log::warn!("[plugin:{}] lsof returned non-zero", pid);
+                                Vec::new()
+                            }
+                            Err(e) => {
+                                log::warn!("[plugin:{}] lsof failed: {}", pid, e);
+                                Vec::new()
+                            }
+                        }
+                    } else {
+                        log::warn!("[plugin:{}] lsof not found", pid);
+                        Vec::new()
+                    };
+
+                    if ports.is_empty() && extension_port.is_none() {
+                        log::warn!(
+                            "[plugin:{}] no listening ports found for pid {}",
+                            pid,
+                            process_pid
+                        );
+                        return Ok("null".to_string());
+                    }
+
+                    log::info!(
+                        "[plugin:{}] LS found: pid={}, ports={:?}, csrf=[REDACTED]",
                         pid,
-                        process_pid
+                        process_pid,
+                        ports
                     );
-                    return Ok("null".to_string());
+
+                    let result = LsDiscoverResult {
+                        pid: process_pid,
+                        csrf,
+                        ports,
+                        extra,
+                        extension_port,
+                    };
+
+                    serde_json::to_string(&result).map_err(|e| {
+                        Exception::throw_message(&ctx_inner, &format!("serialize failed: {}", e))
+                    })
                 }
-
-                log::info!(
-                    "[plugin:{}] LS found: pid={}, ports={:?}, csrf=[REDACTED]",
-                    pid,
-                    process_pid,
-                    ports
-                );
-
-                let result = LsDiscoverResult {
-                    pid: process_pid,
-                    csrf,
-                    ports,
-                    extra,
-                    extension_port,
-                };
-
-                serde_json::to_string(&result).map_err(|e| {
-                    Exception::throw_message(&ctx_inner, &format!("serialize failed: {}", e))
-                })
             },
         )?,
     )?;
@@ -1573,6 +2096,10 @@ struct CcusageQueryOpts {
 enum CcusageProvider {
     Claude,
     Codex,
+    Amp,
+    Kimi,
+    Copilot,
+    OpenCode,
 }
 
 static CCUSAGE_ACTIVE_PROVIDERS: OnceLock<Mutex<HashSet<CcusageProvider>>> = OnceLock::new();
@@ -1638,13 +2165,17 @@ fn ccusage_runner_label(kind: CcusageRunnerKind) -> &'static str {
 #[derive(Copy, Clone)]
 struct CcusageProviderConfig {
     command_namespace: &'static str,
-    home_env_var: &'static str,
+    home_env_var: Option<&'static str>,
 }
 
 fn parse_ccusage_provider(value: &str) -> Option<CcusageProvider> {
     match value.trim().to_ascii_lowercase().as_str() {
         "claude" => Some(CcusageProvider::Claude),
         "codex" => Some(CcusageProvider::Codex),
+        "amp" => Some(CcusageProvider::Amp),
+        "kimi" => Some(CcusageProvider::Kimi),
+        "copilot" => Some(CcusageProvider::Copilot),
+        "opencode" | "opencode-go" => Some(CcusageProvider::OpenCode),
         _ => None,
     }
 }
@@ -1653,24 +2184,115 @@ fn infer_ccusage_provider(plugin_id: &str) -> Option<CcusageProvider> {
     parse_ccusage_provider(plugin_id)
 }
 
-fn resolve_ccusage_provider(opts: &CcusageQueryOpts, plugin_id: &str) -> CcusageProvider {
+fn resolve_ccusage_provider(opts: &CcusageQueryOpts, plugin_id: &str) -> Option<CcusageProvider> {
     opts.provider
         .as_deref()
         .and_then(parse_ccusage_provider)
         .or_else(|| infer_ccusage_provider(plugin_id))
-        .unwrap_or(CcusageProvider::Claude)
 }
 
 fn ccusage_provider_config(provider: CcusageProvider) -> CcusageProviderConfig {
     match provider {
         CcusageProvider::Claude => CcusageProviderConfig {
             command_namespace: "claude",
-            home_env_var: "CLAUDE_CONFIG_DIR",
+            home_env_var: Some("CLAUDE_CONFIG_DIR"),
         },
         CcusageProvider::Codex => CcusageProviderConfig {
             command_namespace: "codex",
-            home_env_var: "CODEX_HOME",
+            home_env_var: Some("CODEX_HOME"),
         },
+        CcusageProvider::Amp => CcusageProviderConfig {
+            command_namespace: "amp",
+            home_env_var: None,
+        },
+        CcusageProvider::Kimi => CcusageProviderConfig {
+            command_namespace: "kimi",
+            home_env_var: None,
+        },
+        CcusageProvider::Copilot => CcusageProviderConfig {
+            command_namespace: "copilot",
+            home_env_var: None,
+        },
+        CcusageProvider::OpenCode => CcusageProviderConfig {
+            command_namespace: "opencode",
+            home_env_var: None,
+        },
+    }
+}
+
+fn ccusage_supports_legacy_fallback(provider: CcusageProvider) -> bool {
+    matches!(provider, CcusageProvider::Claude | CcusageProvider::Codex)
+}
+
+/// True when ccusage can read local CLI logs for this OpenUsage plugin id.
+pub fn ccusage_supported_plugin_id(plugin_id: &str) -> bool {
+    infer_ccusage_provider(plugin_id).is_some()
+}
+
+fn ccusage_since_days_ago(days: i64) -> String {
+    let d = time::OffsetDateTime::now_utc().date() - time::Duration::days(days);
+    format!("{:04}{:02}{:02}", d.year(), u8::from(d.month()), d.day())
+}
+
+/// After a successful probe, ingest ccusage daily rows for plugins that do not run ccusage in JS.
+pub fn post_probe_ccusage_daily(
+    app_data_dir: &std::path::Path,
+    plugin_id: &str,
+    display_name: &str,
+) {
+    if !crate::usage_history::persist_usage_history_enabled(app_data_dir) {
+        return;
+    }
+    let Some(provider) = infer_ccusage_provider(plugin_id) else {
+        return;
+    };
+    // Claude/Codex plugins already query ccusage during probe (card sparkline + ingest).
+    if matches!(provider, CcusageProvider::Claude | CcusageProvider::Codex) {
+        return;
+    }
+
+    let opts = CcusageQueryOpts {
+        since: Some(ccusage_since_days_ago(31)),
+        ..CcusageQueryOpts::default()
+    };
+    let Some(_guard) = CcusageQueryGuard::acquire(provider) else {
+        log::debug!(
+            "[plugin:{}] ccusage post-probe skipped: query already running",
+            plugin_id
+        );
+        return;
+    };
+    let runners = collect_ccusage_runners();
+    let result_json = run_ccusage_query_with_runners(
+        runners,
+        &opts,
+        provider,
+        plugin_id,
+        run_ccusage_with_runner,
+    );
+    let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&result_json) else {
+        return;
+    };
+    if parsed.get("status").and_then(|v| v.as_str()) != Some("ok") {
+        return;
+    }
+    let Some(daily) = parsed.pointer("/data/daily") else {
+        return;
+    };
+    if !daily.is_array() || daily.as_array().is_some_and(|a| a.is_empty()) {
+        return;
+    }
+    let payload = serde_json::json!({
+        "displayName": display_name,
+        "source": "ccusage",
+        "daily": daily,
+    });
+    if let Err(e) = crate::usage_daily::ingest_json(app_data_dir, plugin_id, &payload.to_string()) {
+        log::debug!(
+            "[plugin:{}] ccusage post-probe ingest failed: {}",
+            plugin_id,
+            e
+        );
     }
 }
 
@@ -1682,6 +2304,10 @@ fn ccusage_legacy_package_spec(provider: CcusageProvider) -> String {
     let package_name = match provider {
         CcusageProvider::Claude => CCUSAGE_LEGACY_CLAUDE_PACKAGE_NAME,
         CcusageProvider::Codex => CCUSAGE_LEGACY_CODEX_PACKAGE_NAME,
+        CcusageProvider::Amp
+        | CcusageProvider::Kimi
+        | CcusageProvider::Copilot
+        | CcusageProvider::OpenCode => CCUSAGE_PACKAGE_NAME,
     };
     format!("{}@{}", package_name, CCUSAGE_LEGACY_VERSION)
 }
@@ -1705,7 +2331,11 @@ fn ccusage_home_override<'a>(
             .as_deref()
             .map(str::trim)
             .filter(|s| !s.is_empty()),
-        CcusageProvider::Codex => None,
+        CcusageProvider::Codex
+        | CcusageProvider::Amp
+        | CcusageProvider::Kimi
+        | CcusageProvider::Copilot
+        | CcusageProvider::OpenCode => None,
     }
 }
 
@@ -1787,13 +2417,10 @@ fn ccusage_path_entries_with(home: Option<&Path>, existing_path: Option<&OsStr>)
             entries.push(nvm_bin);
         }
         entries.push(home.join(".local/bin"));
-        // Common Linux tool locations (asdf shims, cargo, rustup, etc.).
-        entries.push(home.join(".cargo/bin"));
-        entries.push(home.join(".asdf/shims"));
     }
 
     entries.extend(
-        ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin"]
+        ["/opt/homebrew/bin", "/usr/local/bin"]
             .into_iter()
             .map(PathBuf::from),
     );
@@ -1940,9 +2567,13 @@ fn ccusage_runner_args(
         CcusageCommandFlavor::Legacy => ccusage_legacy_package_spec(provider),
     };
     let npm_exec_bin = match (flavor, provider) {
-        (CcusageCommandFlavor::Current, _) => CCUSAGE_BIN_NAME,
-        (CcusageCommandFlavor::Legacy, CcusageProvider::Claude) => CCUSAGE_BIN_NAME,
+        (CcusageCommandFlavor::Current, _)
+        | (CcusageCommandFlavor::Legacy, CcusageProvider::Claude) => CCUSAGE_BIN_NAME,
         (CcusageCommandFlavor::Legacy, CcusageProvider::Codex) => CCUSAGE_LEGACY_CODEX_BIN_NAME,
+        (CcusageCommandFlavor::Legacy, CcusageProvider::Amp)
+        | (CcusageCommandFlavor::Legacy, CcusageProvider::Kimi)
+        | (CcusageCommandFlavor::Legacy, CcusageProvider::Copilot)
+        | (CcusageCommandFlavor::Legacy, CcusageProvider::OpenCode) => CCUSAGE_BIN_NAME,
     };
     let mut args: Vec<String> = match kind {
         CcusageRunnerKind::Bunx => vec!["--silent".to_string(), package_spec.clone()],
@@ -2057,7 +2688,6 @@ fn format_ccusage_timeout(timeout: std::time::Duration) -> String {
     format!("{:.3}s", timeout.as_secs_f64())
 }
 
-#[cfg(test)]
 fn run_ccusage_with_runner(
     kind: CcusageRunnerKind,
     program: &str,
@@ -2065,35 +2695,6 @@ fn run_ccusage_with_runner(
     provider: CcusageProvider,
     plugin_id: &str,
 ) -> CcusageRunnerResult {
-    run_ccusage_with_runner_deadline(
-        kind,
-        program,
-        opts,
-        provider,
-        plugin_id,
-        ProbeDeadline::none(),
-    )
-}
-
-fn run_ccusage_with_runner_deadline(
-    kind: CcusageRunnerKind,
-    program: &str,
-    opts: &CcusageQueryOpts,
-    provider: CcusageProvider,
-    plugin_id: &str,
-    deadline: ProbeDeadline,
-) -> CcusageRunnerResult {
-    if deadline.has_elapsed() {
-        log::warn!("[plugin:{}] ccusage skipped: probe timed out", plugin_id);
-        return CcusageRunnerResult::TimedOut;
-    }
-
-    let Some(current_timeout) = deadline.clamp_duration(Duration::from_secs(CCUSAGE_TIMEOUT_SECS))
-    else {
-        log_probe_deadline_skip(plugin_id, "ccusage");
-        return CcusageRunnerResult::TimedOut;
-    };
-
     let current = run_ccusage_with_runner_timeout(
         kind,
         program,
@@ -2101,17 +2702,10 @@ fn run_ccusage_with_runner_deadline(
         provider,
         plugin_id,
         CcusageCommandFlavor::Current,
-        current_timeout,
+        std::time::Duration::from_secs(CCUSAGE_TIMEOUT_SECS),
     );
     match current {
-        CcusageRunnerResult::Failed if deadline.has_elapsed() => CcusageRunnerResult::TimedOut,
-        CcusageRunnerResult::Failed => {
-            let Some(legacy_timeout) =
-                deadline.clamp_duration(Duration::from_secs(CCUSAGE_TIMEOUT_SECS))
-            else {
-                log_probe_deadline_skip(plugin_id, "ccusage legacy fallback");
-                return CcusageRunnerResult::TimedOut;
-            };
+        CcusageRunnerResult::Failed if ccusage_supports_legacy_fallback(provider) => {
             run_ccusage_with_runner_timeout(
                 kind,
                 program,
@@ -2119,7 +2713,7 @@ fn run_ccusage_with_runner_deadline(
                 provider,
                 plugin_id,
                 CcusageCommandFlavor::Legacy,
-                legacy_timeout,
+                std::time::Duration::from_secs(CCUSAGE_TIMEOUT_SECS),
             )
         }
         other => other,
@@ -2142,7 +2736,9 @@ fn run_ccusage_with_runner_timeout(
 
     if let Some(home_path) = ccusage_home_override(opts, provider) {
         let config = ccusage_provider_config(provider);
-        command.env(config.home_env_var, expand_path(&home_path));
+        if let Some(home_env) = config.home_env_var {
+            command.env(home_env, expand_path(home_path));
+        }
     }
 
     let redacted_program = redact_log_message(program);
@@ -2329,6 +2925,10 @@ fn inject_ccusage<'js>(
         Function::new(
             ctx.clone(),
             move |_ctx_inner: Ctx<'_>, opts_json: String| -> rquickjs::Result<String> {
+                if deadline.has_elapsed() {
+                    log_probe_deadline_skip(&pid, "ccusage");
+                    return Ok(serde_json::json!({ "status": "runner_failed" }).to_string());
+                }
                 let opts: CcusageQueryOpts = match serde_json::from_str(&opts_json) {
                     Ok(v) => v,
                     Err(e) => {
@@ -2336,7 +2936,9 @@ fn inject_ccusage<'js>(
                         CcusageQueryOpts::default()
                     }
                 };
-                let provider = resolve_ccusage_provider(&opts, &pid);
+                let Some(provider) = resolve_ccusage_provider(&opts, &pid) else {
+                    return Ok(serde_json::json!({ "status": "unsupported" }).to_string());
+                };
                 let Some(_active_query) = CcusageQueryGuard::acquire(provider) else {
                     log::warn!("[plugin:{}] ccusage query already running", pid);
                     return Ok(serde_json::json!({ "status": "runner_failed" }).to_string());
@@ -2347,11 +2949,7 @@ fn inject_ccusage<'js>(
                     &opts,
                     provider,
                     &pid,
-                    |kind, program, opts, provider, plugin_id| {
-                        run_ccusage_with_runner_deadline(
-                            kind, program, opts, provider, plugin_id, deadline,
-                        )
-                    },
+                    run_ccusage_with_runner,
                 ))
             },
         )?,
@@ -2359,6 +2957,329 @@ fn inject_ccusage<'js>(
 
     host.set("ccusage", ccusage_obj)?;
     Ok(())
+}
+
+fn inject_usage_daily<'js>(
+    ctx: &Ctx<'js>,
+    host: &Object<'js>,
+    instance_id: &str,
+    app_data_dir: &PathBuf,
+) -> rquickjs::Result<()> {
+    let usage_daily_obj = Object::new(ctx.clone())?;
+    let app_data = app_data_dir.clone();
+    let iid = instance_id.to_string();
+
+    usage_daily_obj.set(
+        "_ingestRaw",
+        Function::new(
+            ctx.clone(),
+            move |_ctx_inner: Ctx<'_>, payload_json: String| -> rquickjs::Result<()> {
+                if let Err(e) = crate::usage_daily::ingest_json(&app_data, &iid, &payload_json) {
+                    log::warn!("[plugin:{}] usageDaily.ingest failed: {}", iid, e);
+                }
+                Ok(())
+            },
+        )?,
+    )?;
+
+    host.set("usageDaily", usage_daily_obj)?;
+    Ok(())
+}
+
+fn inject_cursor_logs<'js>(
+    ctx: &Ctx<'js>,
+    host: &Object<'js>,
+    plugin_id: &str,
+    deadline: ProbeDeadline,
+) -> rquickjs::Result<()> {
+    let cursor_logs_obj = Object::new(ctx.clone())?;
+    let pid = plugin_id.to_string();
+
+    cursor_logs_obj.set(
+        "_queryRaw",
+        Function::new(
+            ctx.clone(),
+            move |_ctx_inner: Ctx<'_>, opts_json: String| -> rquickjs::Result<String> {
+                if deadline.has_elapsed() {
+                    log_probe_deadline_skip(&pid, "cursorLogs");
+                    return Ok(
+                        serde_json::json!({ "status": "no_data", "data": { "daily": [] } })
+                            .to_string(),
+                    );
+                }
+                let since = serde_json::from_str::<serde_json::Value>(&opts_json)
+                    .ok()
+                    .and_then(|v| {
+                        v.get("since")
+                            .and_then(|s| s.as_str())
+                            .map(|s| s.to_string())
+                    })
+                    .unwrap_or_default();
+                let since = if since.is_empty() {
+                    let d = time::OffsetDateTime::now_utc().date() - time::Duration::days(30);
+                    format!("{:04}{:02}{:02}", d.year(), u8::from(d.month()), d.day())
+                } else {
+                    since
+                };
+                let (status, daily) = crate::cursor_usage_logs::query_daily_since(&since);
+                let status_str = match status {
+                    crate::cursor_usage_logs::CursorLogsStatus::Ok => "ok",
+                    crate::cursor_usage_logs::CursorLogsStatus::NoData => "no_data",
+                };
+                Ok(serde_json::json!({
+                    "status": status_str,
+                    "data": { "daily": daily }
+                })
+                .to_string())
+            },
+        )?,
+    )?;
+
+    host.set("cursorLogs", cursor_logs_obj)?;
+    Ok(())
+}
+
+fn inject_claude_logs<'js>(
+    ctx: &Ctx<'js>,
+    host: &Object<'js>,
+    deadline: ProbeDeadline,
+) -> rquickjs::Result<()> {
+    let obj = Object::new(ctx.clone())?;
+    obj.set(
+        "_queryRaw",
+        Function::new(
+            ctx.clone(),
+            move |_ctx_inner: Ctx<'_>, opts_json: String| -> rquickjs::Result<String> {
+                if deadline.has_elapsed() {
+                    return Ok(
+                        serde_json::json!({ "status": "no_data", "data": { "daily": [] } })
+                            .to_string(),
+                    );
+                }
+                Ok(crate::claude_usage_scanner::query_daily_host_json(
+                    &opts_json,
+                ))
+            },
+        )?,
+    )?;
+    host.set("claudeLogs", obj)?;
+    Ok(())
+}
+
+fn inject_codex_logs<'js>(
+    ctx: &Ctx<'js>,
+    host: &Object<'js>,
+    deadline: ProbeDeadline,
+) -> rquickjs::Result<()> {
+    let obj = Object::new(ctx.clone())?;
+    obj.set(
+        "_queryRaw",
+        Function::new(
+            ctx.clone(),
+            move |_ctx_inner: Ctx<'_>, opts_json: String| -> rquickjs::Result<String> {
+                if deadline.has_elapsed() {
+                    return Ok(
+                        serde_json::json!({ "status": "no_data", "data": { "daily": [] } })
+                            .to_string(),
+                    );
+                }
+                Ok(crate::codex_usage_scanner::query_daily_host_json(
+                    &opts_json,
+                ))
+            },
+        )?,
+    )?;
+    host.set("codexLogs", obj)?;
+    Ok(())
+}
+
+fn inject_cursor_usage_export<'js>(
+    ctx: &Ctx<'js>,
+    host: &Object<'js>,
+    deadline: ProbeDeadline,
+) -> rquickjs::Result<()> {
+    let export_obj = Object::new(ctx.clone())?;
+    export_obj.set(
+        "_queryMtdRaw",
+        Function::new(
+            ctx.clone(),
+            move |_ctx_inner: Ctx<'_>, opts: String| -> rquickjs::Result<String> {
+                if deadline.has_elapsed() {
+                    return Ok(serde_json::json!({
+                        "status": "error",
+                        "message": "probe deadline exceeded"
+                    })
+                    .to_string());
+                }
+                Ok(crate::cursor_usage_export::query_mtd_host_json(&opts))
+            },
+        )?,
+    )?;
+    export_obj.set(
+        "_queryStatsRaw",
+        Function::new(
+            ctx.clone(),
+            move |_ctx_inner: Ctx<'_>, opts: String| -> rquickjs::Result<String> {
+                if deadline.has_elapsed() {
+                    return Ok(serde_json::json!({
+                        "status": "error",
+                        "message": "probe deadline exceeded"
+                    })
+                    .to_string());
+                }
+                Ok(crate::cursor_usage_export::query_usage_stats_host_json(
+                    &opts,
+                ))
+            },
+        )?,
+    )?;
+    export_obj.set(
+        "_queryDailyRaw",
+        Function::new(
+            ctx.clone(),
+            move |_ctx_inner: Ctx<'_>, opts: String| -> rquickjs::Result<String> {
+                if deadline.has_elapsed() {
+                    return Ok(serde_json::json!({
+                        "status": "error",
+                        "message": "probe deadline exceeded"
+                    })
+                    .to_string());
+                }
+                Ok(crate::cursor_usage_export::query_daily_billing_host_json(
+                    &opts,
+                ))
+            },
+        )?,
+    )?;
+    host.set("cursorUsageExport", export_obj)?;
+    Ok(())
+}
+
+pub fn patch_cursor_usage_export_wrapper(ctx: &rquickjs::Ctx<'_>) -> rquickjs::Result<()> {
+    ctx.eval::<(), _>(
+        r#"
+        (function() {
+            function cursorExportOpts(opts) {
+                var o = opts && typeof opts === "object" ? Object.assign({}, opts) : {};
+                if (!o.pluginId && __openusage_ctx.account && __openusage_ctx.account.baseProviderId) {
+                    o.pluginId = __openusage_ctx.account.baseProviderId;
+                }
+                return JSON.stringify(o);
+            }
+            var rawFn = __openusage_ctx.host.cursorUsageExport._queryMtdRaw;
+            __openusage_ctx.host.cursorUsageExport.queryMtd = function(opts) {
+                var result = rawFn(cursorExportOpts(opts));
+                try {
+                    var parsed = JSON.parse(result);
+                    if (parsed && typeof parsed === "object" && typeof parsed.status === "string") {
+                        return parsed;
+                    }
+                } catch (e) {}
+                return { status: "error", message: "invalid MTD response" };
+            };
+            var statsRawFn = __openusage_ctx.host.cursorUsageExport._queryStatsRaw;
+            __openusage_ctx.host.cursorUsageExport.queryStats = function(opts) {
+                var result = statsRawFn(cursorExportOpts(opts));
+                try {
+                    var parsed = JSON.parse(result);
+                    if (parsed && typeof parsed === "object" && typeof parsed.status === "string") {
+                        return parsed;
+                    }
+                } catch (e) {}
+                return { status: "error", message: "invalid usage stats response" };
+            };
+            var dailyRawFn = __openusage_ctx.host.cursorUsageExport._queryDailyRaw;
+            __openusage_ctx.host.cursorUsageExport.queryDaily = function(opts) {
+                var result = dailyRawFn(cursorExportOpts(opts));
+                try {
+                    var parsed = JSON.parse(result);
+                    if (parsed && typeof parsed === "object" && typeof parsed.status === "string") {
+                        return parsed;
+                    }
+                } catch (e) {}
+                return { status: "error", message: "invalid daily billing response" };
+            };
+        })();
+        "#
+        .as_bytes(),
+    )
+}
+
+pub fn patch_cursor_logs_wrapper(ctx: &rquickjs::Ctx<'_>) -> rquickjs::Result<()> {
+    ctx.eval::<(), _>(
+        r#"
+        (function() {
+            var rawFn = __openusage_ctx.host.cursorLogs._queryRaw;
+            __openusage_ctx.host.cursorLogs.queryDaily = function(opts) {
+                var result = rawFn(JSON.stringify(opts || {}));
+                try {
+                    var parsed = JSON.parse(result);
+                    if (parsed && typeof parsed === "object" && typeof parsed.status === "string") {
+                        return parsed;
+                    }
+                } catch (e) {}
+                return { status: "no_data", data: { daily: [] } };
+            };
+        })();
+        "#
+        .as_bytes(),
+    )
+}
+
+pub fn patch_claude_logs_wrapper(ctx: &rquickjs::Ctx<'_>) -> rquickjs::Result<()> {
+    ctx.eval::<(), _>(
+        r#"
+        (function() {
+            var rawFn = __openusage_ctx.host.claudeLogs._queryRaw;
+            __openusage_ctx.host.claudeLogs.queryDaily = function(opts) {
+                var result = rawFn(JSON.stringify(opts || {}));
+                try {
+                    var parsed = JSON.parse(result);
+                    if (parsed && typeof parsed === "object" && typeof parsed.status === "string") {
+                        return parsed;
+                    }
+                } catch (e) {}
+                return { status: "no_data", data: { daily: [] } };
+            };
+        })();
+        "#
+        .as_bytes(),
+    )
+}
+
+pub fn patch_codex_logs_wrapper(ctx: &rquickjs::Ctx<'_>) -> rquickjs::Result<()> {
+    ctx.eval::<(), _>(
+        r#"
+        (function() {
+            var rawFn = __openusage_ctx.host.codexLogs._queryRaw;
+            __openusage_ctx.host.codexLogs.queryDaily = function(opts) {
+                var result = rawFn(JSON.stringify(opts || {}));
+                try {
+                    var parsed = JSON.parse(result);
+                    if (parsed && typeof parsed === "object" && typeof parsed.status === "string") {
+                        return parsed;
+                    }
+                } catch (e) {}
+                return { status: "no_data", data: { daily: [] } };
+            };
+        })();
+        "#
+        .as_bytes(),
+    )
+}
+
+pub fn patch_usage_daily_wrapper(ctx: &rquickjs::Ctx<'_>) -> rquickjs::Result<()> {
+    ctx.eval::<(), _>(
+        r#"
+        (function() {
+            var rawFn = __openusage_ctx.host.usageDaily._ingestRaw;
+            __openusage_ctx.host.usageDaily.ingest = function(opts) {
+                rawFn(JSON.stringify(opts || {}));
+            };
+        })();
+        "#
+        .as_bytes(),
+    )
 }
 
 pub fn patch_ccusage_wrapper(ctx: &rquickjs::Ctx<'_>) -> rquickjs::Result<()> {
@@ -2382,160 +3303,302 @@ pub fn patch_ccusage_wrapper(ctx: &rquickjs::Ctx<'_>) -> rquickjs::Result<()> {
     )
 }
 
-/// Look up a secret via the freedesktop Secret Service (libsecret `secret-tool`).
-#[cfg(target_os = "linux")]
-fn secret_tool_lookup(attrs: &[(&str, &str)]) -> Result<String, String> {
-    let mut cmd = std::process::Command::new("secret-tool");
-    cmd.arg("lookup");
-    for (key, value) in attrs {
-        cmd.arg(key).arg(value);
-    }
-    let output = cmd
-        .output()
-        .map_err(|e| format!("secret-tool not available (install libsecret): {}", e))?;
-    if !output.status.success() {
-        return Err("keychain item not found".to_string());
-    }
-    Ok(String::from_utf8_lossy(&output.stdout)
-        .trim_end_matches('\n')
-        .to_string())
+#[derive(Default, serde::Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+struct FireworksBillingExportOpts {
+    api_key: String,
+    account_id: String,
+    start_time: String,
+    end_time: String,
 }
 
-/// Store a secret via the freedesktop Secret Service (libsecret `secret-tool`).
-#[cfg(target_os = "linux")]
-fn secret_tool_store(label: &str, value: &str, attrs: &[(&str, &str)]) -> Result<(), String> {
-    use std::io::Write;
-    use std::process::Stdio;
-    let mut cmd = std::process::Command::new("secret-tool");
-    cmd.arg("store").arg("--label").arg(label);
-    for (key, attr_value) in attrs {
-        cmd.arg(key).arg(attr_value);
+fn firectl_runner_candidates() -> [&'static str; 3] {
+    [
+        "firectl",
+        "/opt/homebrew/bin/firectl",
+        "/usr/local/bin/firectl",
+    ]
+}
+
+fn resolve_firectl_runner() -> Option<String> {
+    static FIRECTL_RUNNER: OnceLock<Option<String>> = OnceLock::new();
+    FIRECTL_RUNNER
+        .get_or_init(|| {
+            for candidate in firectl_runner_candidates() {
+                if Command::new(candidate)
+                    .arg("--help")
+                    .status()
+                    .map(|status| status.success())
+                    .unwrap_or(false)
+                {
+                    return Some(candidate.to_string());
+                }
+            }
+            None
+        })
+        .clone()
+}
+
+fn fireworks_auth_ini_contents(api_key: &str) -> String {
+    format!("[fireworks]\napi_key = {}\n", api_key)
+}
+
+fn write_fireworks_auth_ini(auth_root: &Path, api_key: &str) -> std::io::Result<PathBuf> {
+    let fireworks_dir = auth_root.join(".fireworks");
+    std::fs::create_dir_all(&fireworks_dir)?;
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&fireworks_dir, std::fs::Permissions::from_mode(0o700))?;
     }
-    cmd.stdin(Stdio::piped())
-        .stdout(Stdio::null())
-        .stderr(Stdio::piped());
-    let mut child = cmd
-        .spawn()
-        .map_err(|e| format!("secret-tool not available (install libsecret): {}", e))?;
-    child
-        .stdin
-        .take()
-        .ok_or_else(|| "secret-tool stdin unavailable".to_string())?
-        .write_all(value.as_bytes())
-        .map_err(|e| format!("secret-tool write failed: {}", e))?;
-    let output = child
-        .wait_with_output()
-        .map_err(|e| format!("secret-tool store failed: {}", e))?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!(
-            "keychain write failed: {}",
-            stderr.lines().next().unwrap_or("").trim()
-        ));
+
+    let auth_ini_path = fireworks_dir.join("auth.ini");
+    std::fs::write(&auth_ini_path, fireworks_auth_ini_contents(api_key))?;
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&auth_ini_path, std::fs::Permissions::from_mode(0o600))?;
     }
+
+    Ok(auth_ini_path)
+}
+
+fn cleanup_fireworks_export_dir(path: &Path) {
+    let _ = std::fs::remove_dir_all(path);
+}
+
+fn run_fireworks_billing_export_timeout(
+    command: &mut Command,
+    plugin_id: &str,
+    timeout: std::time::Duration,
+) -> Result<std::process::Output, &'static str> {
+    let mut child = match command.spawn() {
+        Ok(child) => child,
+        Err(err) => {
+            log::warn!(
+                "[plugin:{}] failed to spawn firectl billing export: {}",
+                plugin_id,
+                err
+            );
+            return Err("runner_failed");
+        }
+    };
+
+    let mut stdout_reader = child.stdout.take().map(|mut stdout| {
+        std::thread::spawn(move || {
+            let mut v = Vec::new();
+            let _ = std::io::Read::read_to_end(&mut stdout, &mut v);
+            v
+        })
+    });
+    let mut stderr_reader = child.stderr.take().map(|mut stderr| {
+        std::thread::spawn(move || {
+            let mut v = Vec::new();
+            let _ = std::io::Read::read_to_end(&mut stderr, &mut v);
+            v
+        })
+    });
+
+    let start = std::time::Instant::now();
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                let stdout = stdout_reader
+                    .take()
+                    .and_then(|reader| reader.join().ok())
+                    .unwrap_or_default();
+                let stderr = stderr_reader
+                    .take()
+                    .and_then(|reader| reader.join().ok())
+                    .unwrap_or_default();
+                return Ok(std::process::Output {
+                    status,
+                    stdout,
+                    stderr,
+                });
+            }
+            Ok(None) => {
+                if start.elapsed() > timeout {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    let _ = stdout_reader.take().and_then(|reader| reader.join().ok());
+                    let _ = stderr_reader.take().and_then(|reader| reader.join().ok());
+                    log::warn!(
+                        "[plugin:{}] firectl billing export timed out after {}s",
+                        plugin_id,
+                        timeout.as_secs()
+                    );
+                    return Err("timed_out");
+                }
+                std::thread::sleep(std::time::Duration::from_millis(FIRECTL_POLL_INTERVAL_MS));
+            }
+            Err(err) => {
+                log::warn!(
+                    "[plugin:{}] firectl billing export wait failed: {}",
+                    plugin_id,
+                    err
+                );
+                let _ = stdout_reader.take().and_then(|reader| reader.join().ok());
+                let _ = stderr_reader.take().and_then(|reader| reader.join().ok());
+                return Err("runner_failed");
+            }
+        }
+    }
+}
+
+fn run_fireworks_billing_export(
+    opts: &FireworksBillingExportOpts,
+    plugin_id: &str,
+) -> serde_json::Value {
+    if opts.api_key.trim().is_empty()
+        || opts.account_id.trim().is_empty()
+        || opts.start_time.trim().is_empty()
+        || opts.end_time.trim().is_empty()
+    {
+        return serde_json::json!({ "status": "invalid_opts" });
+    }
+
+    let Some(program) = resolve_firectl_runner() else {
+        log::warn!(
+            "[plugin:{}] firectl not found for billing export",
+            plugin_id
+        );
+        return serde_json::json!({ "status": "no_runner" });
+    };
+
+    let workspace_name = format!(
+        "openusage-fireworks-{}-{}",
+        std::process::id(),
+        iso_now().replace([':', '.'], "-")
+    );
+    let temp_dir = std::env::temp_dir().join(&workspace_name);
+    if let Err(err) = std::fs::create_dir_all(&temp_dir) {
+        log::warn!(
+            "[plugin:{}] failed to create Fireworks export temp dir: {}",
+            plugin_id,
+            err
+        );
+        return serde_json::json!({ "status": "runner_failed" });
+    }
+
+    if let Err(err) = write_fireworks_auth_ini(&temp_dir, opts.api_key.trim()) {
+        cleanup_fireworks_export_dir(&temp_dir);
+        log::warn!(
+            "[plugin:{}] failed to prepare Fireworks auth config: {}",
+            plugin_id,
+            err
+        );
+        return serde_json::json!({ "status": "runner_failed" });
+    }
+
+    let file_name = format!("{}.csv", workspace_name);
+    let output_path = temp_dir.join(&file_name);
+    let mut command = Command::new(&program);
+    command
+        .current_dir(&temp_dir)
+        .env("HOME", &temp_dir)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .args([
+            "billing",
+            "export-metrics",
+            "--account-id",
+            opts.account_id.trim(),
+            "--start-time",
+            opts.start_time.trim(),
+            "--end-time",
+            opts.end_time.trim(),
+            "--filename",
+            file_name.as_str(),
+        ]);
+    let result = run_fireworks_billing_export_timeout(
+        &mut command,
+        plugin_id,
+        std::time::Duration::from_secs(FIRECTL_TIMEOUT_SECS),
+    );
+
+    let read_csv = || std::fs::read_to_string(&output_path).ok();
+    let cleanup = || cleanup_fireworks_export_dir(&temp_dir);
+
+    match result {
+        Ok(output) if output.status.success() => {
+            let csv = read_csv();
+            cleanup();
+            match csv {
+                Some(text) if !text.trim().is_empty() => {
+                    serde_json::json!({ "status": "ok", "csv": text })
+                }
+                _ => {
+                    log::warn!(
+                        "[plugin:{}] billing export succeeded but no CSV was produced",
+                        plugin_id
+                    );
+                    serde_json::json!({ "status": "empty" })
+                }
+            }
+        }
+        Ok(output) => {
+            cleanup();
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            log::warn!(
+                "[plugin:{}] firectl billing export failed: {}",
+                plugin_id,
+                stderr.lines().next().unwrap_or("unknown error").trim()
+            );
+            serde_json::json!({ "status": "runner_failed" })
+        }
+        Err(status) => {
+            cleanup();
+            serde_json::json!({ "status": status })
+        }
+    }
+}
+
+fn inject_fireworks<'js>(
+    ctx: &Ctx<'js>,
+    host: &Object<'js>,
+    plugin_id: &str,
+) -> rquickjs::Result<()> {
+    let fireworks_obj = Object::new(ctx.clone())?;
+    let pid = plugin_id.to_string();
+
+    fireworks_obj.set(
+        "_exportBillingMetricsRaw",
+        Function::new(
+            ctx.clone(),
+            move |_ctx_inner: Ctx<'_>, opts_json: String| -> rquickjs::Result<String> {
+                let opts: FireworksBillingExportOpts =
+                    serde_json::from_str(&opts_json).unwrap_or_default();
+                Ok(run_fireworks_billing_export(&opts, &pid).to_string())
+            },
+        )?,
+    )?;
+
+    host.set("fireworks", fireworks_obj)?;
     Ok(())
 }
 
-/// Read a generic password from the platform credential store.
-/// macOS: Keychain via `security`. Linux: Secret Service via `secret-tool`.
-fn keychain_op_read(service: &str, account: Option<&str>) -> Result<String, String> {
-    #[cfg(target_os = "macos")]
-    {
-        let args = match account {
-            Some(a) => keychain_find_generic_password_args_for_account(service, a),
-            None => keychain_find_generic_password_args(service),
-        };
-        let output = std::process::Command::new("security")
-            .args(args)
-            .output()
-            .map_err(|e| format!("keychain read failed: {}", e))?;
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(format!(
-                "keychain item not found: {}",
-                stderr.lines().next().unwrap_or("").trim()
-            ));
-        }
-        Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
-    }
-    #[cfg(target_os = "linux")]
-    {
-        match account {
-            Some(a) => secret_tool_lookup(&[("service", service), ("account", a)]),
-            None => secret_tool_lookup(&[("service", service)]),
-        }
-    }
-    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
-    {
-        let _ = (service, account);
-        Err("keychain API is not supported on this platform".to_string())
-    }
-}
-
-/// Write a generic password to the platform credential store.
-fn keychain_op_write(service: &str, account: Option<&str>, value: &str) -> Result<(), String> {
-    #[cfg(target_os = "macos")]
-    {
-        // When no account is supplied, reuse the existing item's account (if any)
-        // so we update in place rather than create a duplicate entry.
-        let resolved_account = match account {
-            Some(a) => Some(a.to_string()),
-            None => {
-                let mut found: Option<String> = None;
-                if let Ok(output) = std::process::Command::new("security")
-                    .args(["find-generic-password", "-s", service])
-                    .output()
-                {
-                    if output.status.success() {
-                        let stdout = String::from_utf8_lossy(&output.stdout);
-                        for line in stdout.lines() {
-                            if let Some(start) = line.find("\"acct\"<blob>=\"") {
-                                let rest = &line[start + 14..];
-                                if let Some(end) = rest.find('"') {
-                                    found = Some(rest[..end].to_string());
-                                    break;
-                                }
-                            }
-                        }
+pub fn patch_fireworks_wrapper(ctx: &rquickjs::Ctx<'_>) -> rquickjs::Result<()> {
+    ctx.eval::<(), _>(
+        r#"
+        (function() {
+            var rawFn = __openusage_ctx.host.fireworks._exportBillingMetricsRaw;
+            __openusage_ctx.host.fireworks.exportBillingMetrics = function(opts) {
+                var result = rawFn(JSON.stringify(opts || {}));
+                try {
+                    var parsed = JSON.parse(result);
+                    if (parsed && typeof parsed === "object" && typeof parsed.status === "string") {
+                        return parsed;
                     }
-                }
-                found
-            }
-        };
-
-        let output = match resolved_account.as_deref() {
-            Some(acct) => std::process::Command::new("security")
-                .args(keychain_add_generic_password_args_for_account(
-                    service, acct, value,
-                ))
-                .output(),
-            None => std::process::Command::new("security")
-                .args(keychain_add_generic_password_args(service, value))
-                .output(),
-        }
-        .map_err(|e| format!("keychain write failed: {}", e))?;
-
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(format!(
-                "keychain write failed: {}",
-                stderr.lines().next().unwrap_or("").trim()
-            ));
-        }
-        Ok(())
-    }
-    #[cfg(target_os = "linux")]
-    {
-        match account {
-            Some(a) => secret_tool_store(service, value, &[("service", service), ("account", a)]),
-            None => secret_tool_store(service, value, &[("service", service)]),
-        }
-    }
-    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
-    {
-        let _ = (service, account, value);
-        Err("keychain API is not supported on this platform".to_string())
-    }
+                } catch (e) {}
+                return { status: "runner_failed" };
+            };
+        })();
+        "#
+        .as_bytes(),
+    )
 }
 
 fn inject_keychain<'js>(
@@ -2550,25 +3613,132 @@ fn inject_keychain<'js>(
         "readGenericPassword",
         Function::new(
             ctx.clone(),
-            move |ctx_inner: Ctx<'_>, service: String| -> rquickjs::Result<String> {
-                log::info!("[plugin:{}] keychain read: service={}", pid_read, service);
-                match keychain_op_read(&service, None) {
-                    Ok(secret) => {
+            move |ctx_inner: Ctx<'_>,
+                  service: String,
+                  account_args: Rest<Option<String>>|
+                  -> rquickjs::Result<String> {
+                let account = account_args
+                    .0
+                    .into_iter()
+                    .next()
+                    .flatten()
+                    .and_then(|value| {
+                        let trimmed = value.trim();
+                        if trimmed.is_empty() {
+                            None
+                        } else {
+                            Some(trimmed.to_string())
+                        }
+                    });
+                let redacted_account = account.as_deref().map(redact_value);
+                if let Some(ref redacted) = redacted_account {
+                    log::info!(
+                        "[plugin:{}] keychain read: service={}, account={}",
+                        pid_read,
+                        service,
+                        redacted
+                    );
+                } else {
+                    log::info!("[plugin:{}] keychain read: service={}", pid_read, service);
+                }
+
+                if cfg!(target_os = "macos") {
+                    let args = if let Some(ref account) = account {
+                        keychain_find_generic_password_args_for_account(&service, account)
+                    } else {
+                        keychain_find_generic_password_args(&service)
+                    };
+                    let output = std::process::Command::new("security")
+                        .args(args)
+                        .output()
+                        .map_err(|e| {
+                            Exception::throw_message(
+                                &ctx_inner,
+                                &format!("keychain read failed: {}", e),
+                            )
+                        })?;
+
+                    if !output.status.success() {
+                        let stderr = String::from_utf8_lossy(&output.stderr);
+                        let first_line = stderr.lines().next().unwrap_or("").trim();
+                        if let Some(ref redacted) = redacted_account {
+                            log::warn!(
+                                "[plugin:{}] keychain read miss: service={}, account={}, error={}",
+                                pid_read,
+                                service,
+                                redacted,
+                                first_line
+                            );
+                        } else {
+                            log::warn!(
+                                "[plugin:{}] keychain read miss: service={}, error={}",
+                                pid_read,
+                                service,
+                                first_line
+                            );
+                        }
+                        return Err(Exception::throw_message(
+                            &ctx_inner,
+                            &format!("keychain item not found: {}", first_line),
+                        ));
+                    }
+
+                    if let Some(ref redacted) = redacted_account {
+                        log::info!(
+                            "[plugin:{}] keychain read hit: service={}, account={}",
+                            pid_read,
+                            service,
+                            redacted
+                        );
+                    } else {
                         log::info!(
                             "[plugin:{}] keychain read hit: service={}",
                             pid_read,
                             service
                         );
-                        Ok(secret)
                     }
-                    Err(e) => {
-                        log::warn!(
-                            "[plugin:{}] keychain read miss: service={}, error={}",
-                            pid_read,
-                            service,
-                            e
-                        );
-                        Err(Exception::throw_message(&ctx_inner, &e))
+                    return Ok(String::from_utf8_lossy(&output.stdout).trim().to_string());
+                }
+
+                match read_platform_keyring_password(&service, account.as_deref()) {
+                    Ok(value) => {
+                        if let Some(ref redacted) = redacted_account {
+                            log::info!(
+                                "[plugin:{}] keyring read hit: service={}, account={}",
+                                pid_read,
+                                service,
+                                redacted
+                            );
+                        } else {
+                            log::info!(
+                                "[plugin:{}] keyring read hit: service={}",
+                                pid_read,
+                                service
+                            );
+                        }
+                        Ok(value)
+                    }
+                    Err(err) => {
+                        if let Some(ref redacted) = redacted_account {
+                            log::warn!(
+                                "[plugin:{}] keyring read miss: service={}, account={}, error={}",
+                                pid_read,
+                                service,
+                                redacted,
+                                err
+                            );
+                        } else {
+                            log::warn!(
+                                "[plugin:{}] keyring read miss: service={}, error={}",
+                                pid_read,
+                                service,
+                                err
+                            );
+                        }
+                        Err(Exception::throw_message(
+                            &ctx_inner,
+                            &format!("keychain item not found: {}", err),
+                        ))
                     }
                 }
             },
@@ -2581,7 +3751,13 @@ fn inject_keychain<'js>(
         Function::new(
             ctx.clone(),
             move |ctx_inner: Ctx<'_>, service: String| -> rquickjs::Result<String> {
-                let account = current_macos_keychain_account();
+                let account = if cfg!(target_os = "macos") {
+                    current_macos_keychain_account()
+                } else {
+                    current_macos_keychain_account_from_user_env(
+                        read_env_from_process("USER").or_else(|| read_env_from_process("USERNAME")),
+                    )
+                };
                 let redacted_account = redact_value(&account);
                 log::info!(
                     "[plugin:{}] keychain read: service={}, account={}",
@@ -2589,27 +3765,123 @@ fn inject_keychain<'js>(
                     service,
                     redacted_account
                 );
-                match keychain_op_read(&service, Some(&account)) {
-                    Ok(secret) => {
-                        log::info!(
-                            "[plugin:{}] keychain read hit: service={}, account={}",
-                            pid_read_current_user,
-                            service,
-                            redacted_account
-                        );
-                        Ok(secret)
-                    }
-                    Err(e) => {
+
+                if cfg!(target_os = "macos") {
+                    let args = keychain_find_generic_password_args_for_account(&service, &account);
+                    let output = std::process::Command::new("security")
+                        .args(&args)
+                        .output()
+                        .map_err(|e| {
+                            Exception::throw_message(
+                                &ctx_inner,
+                                &format!("keychain read failed: {}", e),
+                            )
+                        })?;
+
+                    if !output.status.success() {
+                        let stderr = String::from_utf8_lossy(&output.stderr);
+                        let first_line = stderr.lines().next().unwrap_or("").trim();
                         log::warn!(
                             "[plugin:{}] keychain read miss: service={}, account={}, error={}",
                             pid_read_current_user,
                             service,
                             redacted_account,
-                            e
+                            first_line
                         );
-                        Err(Exception::throw_message(&ctx_inner, &e))
+                        return Err(Exception::throw_message(
+                            &ctx_inner,
+                            &format!("keychain item not found: {}", first_line),
+                        ));
+                    }
+
+                    log::info!(
+                        "[plugin:{}] keychain read hit: service={}, account={}",
+                        pid_read_current_user,
+                        service,
+                        redacted_account
+                    );
+                    return Ok(String::from_utf8_lossy(&output.stdout).trim().to_string());
+                }
+
+                match read_platform_keyring_password(&service, Some(&account)) {
+                    Ok(value) => {
+                        log::info!(
+                            "[plugin:{}] keyring read hit: service={}, account={}",
+                            pid_read_current_user,
+                            service,
+                            redacted_account
+                        );
+                        Ok(value)
+                    }
+                    Err(err) => {
+                        log::warn!(
+                            "[plugin:{}] keyring read miss: service={}, account={}, error={}",
+                            pid_read_current_user,
+                            service,
+                            redacted_account,
+                            err
+                        );
+                        Err(Exception::throw_message(
+                            &ctx_inner,
+                            &format!("keychain item not found: {}", err),
+                        ))
                     }
                 }
+            },
+        )?,
+    )?;
+
+    let pid_write_account = plugin_id.to_string();
+    keychain_obj.set(
+        "writeGenericPasswordForAccount",
+        Function::new(
+            ctx.clone(),
+            move |ctx_inner: Ctx<'_>,
+                  service: String,
+                  account: String,
+                  value: String|
+                  -> rquickjs::Result<()> {
+                let account = account.trim().to_string();
+                if account.is_empty() {
+                    return Err(Exception::throw_message(
+                        &ctx_inner,
+                        "keychain account must not be empty",
+                    ));
+                }
+                let redacted_account = redact_value(&account);
+                log::info!(
+                    "[plugin:{}] keychain write: service={}, account={}",
+                    pid_write_account,
+                    service,
+                    redacted_account
+                );
+
+                if cfg!(target_os = "macos") {
+                    let output = std::process::Command::new("security")
+                        .args(keychain_add_generic_password_args_for_account(
+                            &service, &account, &value,
+                        ))
+                        .output()
+                        .map_err(|e| {
+                            Exception::throw_message(
+                                &ctx_inner,
+                                &format!("keychain write failed: {}", e),
+                            )
+                        })?;
+                    if !output.status.success() {
+                        let stderr = String::from_utf8_lossy(&output.stderr);
+                        let first_line = stderr.lines().next().unwrap_or("").trim();
+                        return Err(Exception::throw_message(
+                            &ctx_inner,
+                            &format!("keychain write failed: {}", first_line),
+                        ));
+                    }
+                    return Ok(());
+                }
+
+                write_platform_keyring_password(&service, Some(&account), &value).map_err(|err| {
+                    Exception::throw_message(&ctx_inner, &format!("keychain write failed: {}", err))
+                })
             },
         )?,
     )?;
@@ -2620,70 +3892,137 @@ fn inject_keychain<'js>(
         Function::new(
             ctx.clone(),
             move |ctx_inner: Ctx<'_>, service: String, value: String| -> rquickjs::Result<()> {
+                if !cfg!(target_os = "macos") {
+                    return write_platform_keyring_password(&service, None, &value).map_err(
+                        |err| {
+                            Exception::throw_message(
+                                &ctx_inner,
+                                &format!("keychain write failed: {}", err),
+                            )
+                        },
+                    );
+                }
                 log::info!("[plugin:{}] keychain write: service={}", pid_write, service);
-                match keychain_op_write(&service, None, &value) {
-                    Ok(()) => {
-                        log::info!(
-                            "[plugin:{}] keychain write succeeded: service={}",
-                            pid_write,
-                            service
-                        );
-                        Ok(())
-                    }
-                    Err(e) => {
-                        log::warn!(
-                            "[plugin:{}] keychain write failed: service={}, error={}",
-                            pid_write,
-                            service,
-                            e
-                        );
-                        Err(Exception::throw_message(&ctx_inner, &e))
-                    }
-                }
-            },
-        )?,
-    )?;
 
-    let pid_write_current_user = plugin_id.to_string();
-    keychain_obj.set(
-        "writeGenericPasswordForCurrentUser",
-        Function::new(
-            ctx.clone(),
-            move |ctx_inner: Ctx<'_>, service: String, value: String| -> rquickjs::Result<()> {
-                let account = current_macos_keychain_account();
-                let redacted_account = redact_value(&account);
-                log::info!(
-                    "[plugin:{}] keychain write: service={}, account={}",
-                    pid_write_current_user,
-                    service,
-                    redacted_account
-                );
-                match keychain_op_write(&service, Some(&account), &value) {
-                    Ok(()) => {
-                        log::info!(
-                            "[plugin:{}] keychain write succeeded: service={}, account={}",
-                            pid_write_current_user,
-                            service,
-                            redacted_account
-                        );
-                        Ok(())
-                    }
-                    Err(e) => {
-                        log::warn!(
-                            "[plugin:{}] keychain write failed: service={}, account={}, error={}",
-                            pid_write_current_user,
-                            service,
-                            redacted_account,
-                            e
-                        );
-                        Err(Exception::throw_message(&ctx_inner, &e))
+                let mut account_arg: Option<String> = None;
+                let find_output = std::process::Command::new("security")
+                    .args(["find-generic-password", "-s", &service])
+                    .output();
+
+                if let Ok(output) = find_output {
+                    if output.status.success() {
+                        let stdout = String::from_utf8_lossy(&output.stdout);
+                        for line in stdout.lines() {
+                            if let Some(start) = line.find("\"acct\"<blob>=\"") {
+                                let rest = &line[start + 14..];
+                                if let Some(end) = rest.find('"') {
+                                    account_arg = Some(rest[..end].to_string());
+                                    break;
+                                }
+                            }
+                        }
                     }
                 }
+
+                let output = if let Some(ref acct) = account_arg {
+                    std::process::Command::new("security")
+                        .args(keychain_add_generic_password_args_for_account(
+                            &service, acct, &value,
+                        ))
+                        .output()
+                } else {
+                    std::process::Command::new("security")
+                        .args(keychain_add_generic_password_args(&service, &value))
+                        .output()
+                }
+                .map_err(|e| {
+                    Exception::throw_message(&ctx_inner, &format!("keychain write failed: {}", e))
+                })?;
+
+                if !output.status.success() {
+                    let stderr = String::from_utf8_lossy(&output.stderr);
+                    let first_line = stderr.lines().next().unwrap_or("").trim();
+                    log::warn!(
+                        "[plugin:{}] keychain write failed: service={}, error={}",
+                        pid_write,
+                        service,
+                        first_line
+                    );
+                    return Err(Exception::throw_message(
+                        &ctx_inner,
+                        &format!("keychain write failed: {}", first_line),
+                    ));
+                }
+
+                log::info!(
+                    "[plugin:{}] keychain write succeeded: service={}",
+                    pid_write,
+                    service
+                );
+                Ok(())
             },
         )?,
     )?;
 
     host.set("keychain", keychain_obj)?;
+    Ok(())
+}
+
+fn rusqlite_value_to_json(v: rusqlite::types::Value) -> JsonValue {
+    match v {
+        rusqlite::types::Value::Null => JsonValue::Null,
+        rusqlite::types::Value::Integer(i) => JsonValue::Number(serde_json::Number::from(i)),
+        rusqlite::types::Value::Real(f) => serde_json::Number::from_f64(f)
+            .map(JsonValue::Number)
+            .unwrap_or(JsonValue::Null),
+        rusqlite::types::Value::Text(s) => JsonValue::String(s),
+        rusqlite::types::Value::Blob(b) => {
+            JsonValue::String(String::from_utf8_lossy(&b).into_owned())
+        }
+    }
+}
+
+fn sqlite_query_impl(expanded: &str, sql: &str) -> Result<String, String> {
+    // Prefer normal read-only open so WAL contents are visible (common for app state DBs).
+    let conn = match Connection::open_with_flags(expanded, OpenFlags::SQLITE_OPEN_READ_ONLY) {
+        Ok(c) => c,
+        Err(e) => {
+            // Fall back to immutable=1 to bypass WAL/SHM lock issues after macOS sleep.
+            let encoded = expanded
+                .replace('%', "%25")
+                .replace(' ', "%20")
+                .replace('#', "%23")
+                .replace('?', "%3F");
+            let uri = format!("file:{}?immutable=1", encoded);
+            Connection::open_with_flags(
+                &uri,
+                OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_URI,
+            )
+            .map_err(|e2| format!("sqlite open failed: {} (fallback: {})", e, e2))?
+        }
+    };
+    let mut stmt = conn.prepare(sql).map_err(|e| e.to_string())?;
+    let col_names: Vec<String> = stmt.column_names().into_iter().map(String::from).collect();
+    let rows = stmt
+        .query_map([], |row| {
+            let mut obj = Map::new();
+            for (i, name) in col_names.iter().enumerate() {
+                let v: rusqlite::types::Value = row
+                    .get(i)
+                    .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
+                obj.insert(name.clone(), rusqlite_value_to_json(v));
+            }
+            Ok(JsonValue::Object(obj))
+        })
+        .map_err(|e| e.to_string())?;
+    let arr: Result<Vec<_>, _> = rows.collect();
+    let arr = arr.map_err(|e| e.to_string())?;
+    serde_json::to_string(&arr).map_err(|e| e.to_string())
+}
+
+fn sqlite_exec_impl(expanded: &str, sql: &str) -> Result<(), String> {
+    let conn = Connection::open(expanded).map_err(|e| e.to_string())?;
+    conn.execute_batch(sql).map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -2695,6 +4034,7 @@ fn inject_sqlite<'js>(ctx: &Ctx<'js>, host: &Object<'js>) -> rquickjs::Result<()
         Function::new(
             ctx.clone(),
             move |ctx_inner: Ctx<'_>, db_path: String, sql: String| -> rquickjs::Result<String> {
+                reject_path_traversal(&ctx_inner, &db_path)?;
                 if sql.lines().any(|line| line.trim_start().starts_with('.')) {
                     return Err(Exception::throw_message(
                         &ctx_inner,
@@ -2702,48 +4042,8 @@ fn inject_sqlite<'js>(ctx: &Ctx<'js>, host: &Object<'js>) -> rquickjs::Result<()
                     ));
                 }
                 let expanded = expand_path(&db_path);
-
-                // Prefer a normal read-only open so WAL contents are visible (common for app state DBs).
-                // Fall back to immutable=1 to bypass WAL/SHM lock issues after macOS sleep.
-                let primary = std::process::Command::new("sqlite3")
-                    .args(["-readonly", "-json", &expanded, &sql])
-                    .output()
-                    .map_err(|e| {
-                        Exception::throw_message(&ctx_inner, &format!("sqlite3 exec failed: {}", e))
-                    })?;
-
-                if primary.status.success() {
-                    return Ok(String::from_utf8_lossy(&primary.stdout).to_string());
-                }
-
-                // Percent-encode special chars for valid URI (% must be first!)
-                let encoded = expanded
-                    .replace('%', "%25")
-                    .replace(' ', "%20")
-                    .replace('#', "%23")
-                    .replace('?', "%3F");
-                let uri_path = format!("file:{}?immutable=1", encoded);
-                let fallback = std::process::Command::new("sqlite3")
-                    .args(["-readonly", "-json", &uri_path, &sql])
-                    .output()
-                    .map_err(|e| {
-                        Exception::throw_message(&ctx_inner, &format!("sqlite3 exec failed: {}", e))
-                    })?;
-
-                if !fallback.status.success() {
-                    let stderr_primary = String::from_utf8_lossy(&primary.stderr);
-                    let stderr_fallback = String::from_utf8_lossy(&fallback.stderr);
-                    return Err(Exception::throw_message(
-                        &ctx_inner,
-                        &format!(
-                            "sqlite3 error: {} (fallback: {})",
-                            stderr_primary.trim(),
-                            stderr_fallback.trim()
-                        ),
-                    ));
-                }
-
-                Ok(String::from_utf8_lossy(&fallback.stdout).to_string())
+                sqlite_query_impl(&expanded, &sql)
+                    .map_err(|e| Exception::throw_message(&ctx_inner, &e))
             },
         )?,
     )?;
@@ -2753,6 +4053,7 @@ fn inject_sqlite<'js>(ctx: &Ctx<'js>, host: &Object<'js>) -> rquickjs::Result<()
         Function::new(
             ctx.clone(),
             move |ctx_inner: Ctx<'_>, db_path: String, sql: String| -> rquickjs::Result<()> {
+                reject_path_traversal(&ctx_inner, &db_path)?;
                 if sql.lines().any(|line| line.trim_start().starts_with('.')) {
                     return Err(Exception::throw_message(
                         &ctx_inner,
@@ -2760,22 +4061,8 @@ fn inject_sqlite<'js>(ctx: &Ctx<'js>, host: &Object<'js>) -> rquickjs::Result<()
                     ));
                 }
                 let expanded = expand_path(&db_path);
-                let output = std::process::Command::new("sqlite3")
-                    .args([&expanded, &sql])
-                    .output()
-                    .map_err(|e| {
-                        Exception::throw_message(&ctx_inner, &format!("sqlite3 exec failed: {}", e))
-                    })?;
-
-                if !output.status.success() {
-                    let stderr = String::from_utf8_lossy(&output.stderr);
-                    return Err(Exception::throw_message(
-                        &ctx_inner,
-                        &format!("sqlite3 error: {}", stderr.trim()),
-                    ));
-                }
-
-                Ok(())
+                sqlite_exec_impl(&expanded, &sql)
+                    .map_err(|e| Exception::throw_message(&ctx_inner, &e))
             },
         )?,
     )?;
@@ -2793,14 +4080,28 @@ fn iso_now() -> String {
         })
 }
 
+fn path_has_parent_segment(path: &str) -> bool {
+    path.split(&['/', '\\']).any(|segment| segment == "..")
+}
+
+fn reject_path_traversal<'js>(ctx: &Ctx<'js>, path: &str) -> rquickjs::Result<()> {
+    if path_has_parent_segment(path) {
+        return Err(Exception::throw_message(
+            ctx,
+            "path traversal is not allowed",
+        ));
+    }
+    Ok(())
+}
+
 fn expand_path(path: &str) -> String {
     if path == "~" {
-        if let Some(home) = dirs::home_dir() {
+        if let Some(home) = home_dir() {
             return home.to_string_lossy().to_string();
         }
     }
     if path.starts_with("~/") {
-        if let Some(home) = dirs::home_dir() {
+        if let Some(home) = home_dir() {
             return home.join(&path[2..]).to_string_lossy().to_string();
         }
     }
@@ -2831,12 +4132,27 @@ mod tests {
         )
     }
 
-    fn node_generated_aes_256_gcm_vector_for_test() -> (&'static str, &'static str, &'static str) {
-        (
-            "CwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCws=",
-            "BwcHBwcHBwcHBwcHBwcHBw==:yFbCs4LOJ0aj9NPNf5pfVA==:7PKjtOdATLClvaWrMw0b0M8Nov4KPhxwQX4hdczqQlcZi9Zhi6DjAoK+WolvMwuhPIk=",
-            r#"{"access_token":"token","refresh_token":"refresh"}"#,
-        )
+    #[test]
+    fn app_support_path_candidates_cover_linux_macos_windows() {
+        let paths = app_support_path_candidates("Kiro/User/globalStorage/state.vscdb");
+        assert_eq!(paths.len(), 3);
+        assert!(paths[0].starts_with("~/.config/Kiro/"));
+        assert!(paths[1].contains("Library/Application Support/Kiro/"));
+        assert!(paths[2].contains("AppData/Roaming/Kiro/"));
+    }
+
+    #[test]
+    fn first_existing_path_returns_first_match() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let existing = dir.path().join("found.txt");
+        std::fs::write(&existing, "ok").expect("write");
+        let missing = dir.path().join("missing.txt");
+        let paths = vec![
+            missing.to_string_lossy().to_string(),
+            existing.to_string_lossy().to_string(),
+        ];
+        let found = first_existing_path(&paths).expect("found");
+        assert_eq!(found, existing.to_string_lossy());
     }
 
     #[test]
@@ -2913,6 +4229,15 @@ mod tests {
     }
 
     #[test]
+    fn path_has_parent_segment_detects_dot_dot() {
+        assert!(path_has_parent_segment("~/../../etc/passwd"));
+        assert!(path_has_parent_segment("/tmp/../etc/passwd"));
+        assert!(!path_has_parent_segment(
+            "~/.config/Cursor/User/globalStorage/state.vscdb"
+        ));
+    }
+
+    #[test]
     fn sanitize_env_value_strips_ansi_and_control_sequences() {
         let raw = "\u{1b}[?1000l\n  sk-test-key-12345\u{1b}[?2004h\r\n";
         let value = sanitize_env_value(raw);
@@ -2983,7 +4308,8 @@ mod tests {
         let ctx = Context::full(&rt).expect("context");
         ctx.with(|ctx| {
             let app_data = std::env::temp_dir();
-            inject_host_api(&ctx, "test", &app_data, "0.0.0").expect("inject host api");
+            inject_host_api(&ctx, "test", "test", None, &app_data, "0.0.0")
+                .expect("inject host api");
             let globals = ctx.globals();
             let probe_ctx: Object = globals.get("__openusage_ctx").expect("probe ctx");
             let host: Object = probe_ctx.get("host").expect("host");
@@ -2994,19 +4320,53 @@ mod tests {
     }
 
     #[test]
-    fn crypto_api_decrypts_node_generated_envelope_from_js() {
-        let (key_b64, envelope, expected_plaintext) = node_generated_aes_256_gcm_vector_for_test();
+    fn keychain_api_exposes_write() {
         let rt = Runtime::new().expect("runtime");
         let ctx = Context::full(&rt).expect("context");
         ctx.with(|ctx| {
             let app_data = std::env::temp_dir();
-            inject_host_api(&ctx, "test", &app_data, "0.0.0").expect("inject host api");
-            let js_expr = format!(
-                r#"__openusage_ctx.host.crypto.decryptAes256Gcm("{}", "{}")"#,
-                envelope, key_b64
+            inject_host_api(&ctx, "test", "test", None, &app_data, "0.0.0")
+                .expect("inject host api");
+            let globals = ctx.globals();
+            let probe_ctx: Object = globals.get("__openusage_ctx").expect("probe ctx");
+            let host: Object = probe_ctx.get("host").expect("host");
+            let keychain: Object = host.get("keychain").expect("keychain");
+            let _read: Function = keychain
+                .get("readGenericPassword")
+                .expect("readGenericPassword");
+            let _write: Function = keychain
+                .get("writeGenericPassword")
+                .expect("writeGenericPassword");
+        });
+    }
+
+    #[test]
+    fn keychain_read_generic_password_accepts_optional_account_arg_from_js() {
+        let rt = Runtime::new().expect("runtime");
+        let ctx = Context::full(&rt).expect("context");
+        ctx.with(|ctx| {
+            let app_data = std::env::temp_dir();
+            inject_host_api(&ctx, "test", "test", None, &app_data, "0.0.0")
+                .expect("inject host api");
+
+            let message: String = ctx
+                .eval(
+                    r#"
+                    try {
+                        __openusage_ctx.host.keychain.readGenericPassword("__openusage_missing_service__");
+                        "ok";
+                    } catch (e) {
+                        String(e);
+                    }
+                    "#,
+                )
+                .expect("js eval");
+
+            assert!(
+                !message.contains("2 where expected"),
+                "single-arg call should reach the keychain implementation, got: {}",
+                message
             );
-            let decrypted: String = ctx.eval(js_expr).expect("js decrypt");
-            assert_eq!(decrypted, expected_plaintext);
         });
     }
 
@@ -3016,8 +4376,8 @@ mod tests {
         let ctx = Context::full(&rt).expect("context");
         ctx.with(|ctx| {
             let app_data = std::env::temp_dir();
-            inject_host_api(&ctx, "test", &app_data, "0.0.0").expect("inject host api");
-            // Vector: `printf '%s' 'hello' | shasum -a 256`
+            inject_host_api(&ctx, "test", "test", None, &app_data, "0.0.0")
+                .expect("inject host api");
             let result: String = ctx
                 .eval(r#"__openusage_ctx.host.crypto.sha256Hex("hello")"#)
                 .expect("js sha256");
@@ -3025,40 +4385,28 @@ mod tests {
                 result,
                 "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
             );
-
-            let empty: String = ctx
-                .eval(r#"__openusage_ctx.host.crypto.sha256Hex("")"#)
-                .expect("js sha256 empty");
-            assert_eq!(
-                empty,
-                "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-            );
         });
     }
 
     #[test]
-    fn keychain_api_exposes_write_variants() {
+    fn fireworks_api_exposes_billing_export_helper() {
         let rt = Runtime::new().expect("runtime");
         let ctx = Context::full(&rt).expect("context");
         ctx.with(|ctx| {
             let app_data = std::env::temp_dir();
-            inject_host_api(&ctx, "test", &app_data, "0.0.0").expect("inject host api");
+            inject_host_api(&ctx, "test", "test", None, &app_data, "0.0.0")
+                .expect("inject host api");
+            patch_fireworks_wrapper(&ctx).expect("patch fireworks wrapper");
             let globals = ctx.globals();
             let probe_ctx: Object = globals.get("__openusage_ctx").expect("probe ctx");
             let host: Object = probe_ctx.get("host").expect("host");
-            let keychain: Object = host.get("keychain").expect("keychain");
-            let _read: Function = keychain
-                .get("readGenericPassword")
-                .expect("readGenericPassword");
-            let _read_current_user: Function = keychain
-                .get("readGenericPasswordForCurrentUser")
-                .expect("readGenericPasswordForCurrentUser");
-            let _write: Function = keychain
-                .get("writeGenericPassword")
-                .expect("writeGenericPassword");
-            let _write_current_user: Function = keychain
-                .get("writeGenericPasswordForCurrentUser")
-                .expect("writeGenericPasswordForCurrentUser");
+            let fireworks: Object = host.get("fireworks").expect("fireworks");
+            let _raw: Function = fireworks
+                .get("_exportBillingMetricsRaw")
+                .expect("_exportBillingMetricsRaw");
+            let _wrapped: Function = fireworks
+                .get("exportBillingMetrics")
+                .expect("exportBillingMetrics");
         });
     }
 
@@ -3081,12 +4429,24 @@ mod tests {
                 "{name} must be whitelisted for Claude auth compatibility"
             );
         }
+        for name in [
+            "OLLAMA_API_KEY",
+            "OLLAMA_HOST",
+            "OLLAMA_SESSION_COOKIE",
+            "OLLAMA_COOKIE",
+        ] {
+            assert!(
+                WHITELISTED_ENV_VARS.contains(&name),
+                "{name} must be whitelisted for Ollama auth compatibility"
+            );
+        }
 
         let rt = Runtime::new().expect("runtime");
         let ctx = Context::full(&rt).expect("context");
         ctx.with(|ctx| {
             let app_data = std::env::temp_dir();
-            inject_host_api(&ctx, "test", &app_data, "0.0.0").expect("inject host api");
+            inject_host_api(&ctx, "test", "test", None, &app_data, "0.0.0")
+                .expect("inject host api");
             let globals = ctx.globals();
             let probe_ctx: Object = globals.get("__openusage_ctx").expect("probe ctx");
             let host: Object = probe_ctx.get("host").expect("host");
@@ -3154,7 +4514,8 @@ mod tests {
         let ctx = Context::full(&rt).expect("context");
         ctx.with(|ctx| {
             let app_data = std::env::temp_dir();
-            inject_host_api(&ctx, "test", &app_data, "0.0.0").expect("inject host api");
+            inject_host_api(&ctx, "test", "test", None, &app_data, "0.0.0")
+                .expect("inject host api");
             let globals = ctx.globals();
             let probe_ctx: Object = globals.get("__openusage_ctx").expect("probe ctx");
             let host: Object = probe_ctx.get("host").expect("host");
@@ -3180,110 +4541,55 @@ mod tests {
     }
 
     #[test]
-    fn current_macos_keychain_account_prefers_explicit_user_value() {
-        assert_eq!(
-            current_macos_keychain_account_from_user_env(Some("openusage-test-user".to_string())),
-            "openusage-test-user"
-        );
-    }
+    fn env_api_exposes_fireworks_api_key() {
+        struct RestoreEnvVar {
+            name: &'static str,
+            old: Option<String>,
+        }
 
-    #[test]
-    fn expand_path_expands_tilde_prefix() {
-        let home = dirs::home_dir().expect("home dir");
-        let expected = home.join(".claude-custom").to_string_lossy().to_string();
+        impl Drop for RestoreEnvVar {
+            fn drop(&mut self) {
+                if let Some(value) = self.old.take() {
+                    unsafe { std::env::set_var(self.name, value) };
+                } else {
+                    unsafe { std::env::remove_var(self.name) };
+                }
+            }
+        }
 
-        assert_eq!(expand_path("~/.claude-custom"), expected);
-    }
+        let name = "FIREWORKS_API_KEY";
+        let old = std::env::var(name).ok();
+        let _restore = RestoreEnvVar { name, old };
+        unsafe { std::env::set_var(name, "fw-process-env-test-1234567890") };
 
-    #[test]
-    fn keychain_find_generic_password_args_include_service_only_lookup() {
-        let args = keychain_find_generic_password_args("Claude Code-credentials");
-        let rendered: Vec<String> = args
-            .into_iter()
-            .map(|value| value.to_string_lossy().into_owned())
-            .collect();
+        let rt = Runtime::new().expect("runtime");
+        let ctx = Context::full(&rt).expect("context");
+        ctx.with(|ctx| {
+            let app_data = std::env::temp_dir();
+            inject_host_api(&ctx, "fireworks", "fireworks", None, &app_data, "0.0.0")
+                .expect("inject host api");
+            let globals = ctx.globals();
+            let probe_ctx: Object = globals.get("__openusage_ctx").expect("probe ctx");
+            let host: Object = probe_ctx.get("host").expect("host");
+            let env: Object = host.get("env").expect("env");
+            let get: Function = env.get("get").expect("get");
 
-        assert_eq!(
-            rendered,
-            vec![
-                "find-generic-password",
-                "-s",
-                "Claude Code-credentials",
-                "-w",
-            ]
-        );
-    }
+            let value: Option<String> = get.call((name.to_string(),)).expect("get");
+            assert_eq!(
+                value.as_deref(),
+                Some("fw-process-env-test-1234567890"),
+                "fireworks env should be exposed to plugins"
+            );
 
-    #[test]
-    fn keychain_find_generic_password_args_for_account_include_account_and_service() {
-        let args = keychain_find_generic_password_args_for_account(
-            "Claude Code-credentials",
-            "openusage-test-user",
-        );
-        let rendered: Vec<String> = args
-            .into_iter()
-            .map(|value| value.to_string_lossy().into_owned())
-            .collect();
-
-        assert_eq!(
-            rendered,
-            vec![
-                "find-generic-password",
-                "-a",
-                "openusage-test-user",
-                "-s",
-                "Claude Code-credentials",
-                "-w",
-            ]
-        );
-    }
-
-    #[test]
-    fn keychain_add_generic_password_args_include_service_only_write() {
-        let args = keychain_add_generic_password_args("Claude Code-credentials", "secret-value");
-        let rendered: Vec<String> = args
-            .into_iter()
-            .map(|value| value.to_string_lossy().into_owned())
-            .collect();
-
-        assert_eq!(
-            rendered,
-            vec![
-                "add-generic-password",
-                "-U",
-                "-s",
-                "Claude Code-credentials",
-                "-w",
-                "secret-value",
-            ]
-        );
-    }
-
-    #[test]
-    fn keychain_add_generic_password_args_for_account_include_update_account_service_and_value() {
-        let args = keychain_add_generic_password_args_for_account(
-            "Claude Code-credentials",
-            "openusage-test-user",
-            "secret-value",
-        );
-        let rendered: Vec<String> = args
-            .into_iter()
-            .map(|value| value.to_string_lossy().into_owned())
-            .collect();
-
-        assert_eq!(
-            rendered,
-            vec![
-                "add-generic-password",
-                "-U",
-                "-a",
-                "openusage-test-user",
-                "-s",
-                "Claude Code-credentials",
-                "-w",
-                "secret-value",
-            ]
-        );
+            let js_value: Option<String> = ctx
+                .eval(r#"__openusage_ctx.host.env.get("FIREWORKS_API_KEY")"#)
+                .expect("js get");
+            assert_eq!(
+                js_value.as_deref(),
+                Some("fw-process-env-test-1234567890"),
+                "fireworks env should be exposed from JS"
+            );
+        });
     }
 
     #[test]
@@ -3339,6 +4645,22 @@ mod tests {
     }
 
     #[test]
+    fn redact_url_redacts_account_id_path_segment() {
+        let url = "https://api.fireworks.ai/v1/accounts/acct_1234567890abcdef/quotas?pageSize=200";
+        let redacted = redact_url(url);
+        assert!(
+            !redacted.contains("acct_1234567890abcdef"),
+            "account path segment should be redacted, got: {}",
+            redacted
+        );
+        assert!(
+            redacted.contains("/quotas?pageSize=200"),
+            "non-sensitive path/query parts should remain visible, got: {}",
+            redacted
+        );
+    }
+
+    #[test]
     fn redact_body_redacts_jwt() {
         let body = r#"{"token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U"}"#;
         let redacted = redact_body(body);
@@ -3355,6 +4677,34 @@ mod tests {
         let body = r#"{"key": "sk-1234567890abcdefghij"}"#;
         let redacted = redact_body(body);
         assert!(redacted.contains("sk-1...ghij"));
+    }
+
+    #[test]
+    fn redact_body_redacts_email_in_html() {
+        let body = r#"<html><body><p>person@example.com</p></body></html>"#;
+        let redacted = redact_body(body);
+        assert!(
+            !redacted.contains("person@example.com"),
+            "email should be redacted from HTML body, got: {}",
+            redacted
+        );
+        assert!(redacted.contains("pers....com"));
+    }
+
+    #[test]
+    fn redact_body_redacts_devin_session_token() {
+        let body = r#"metadata apiKey=devin-session-token$abcdefghijklmnopqrstuvwxyz123456"#;
+        let redacted = redact_body(body);
+        assert!(
+            !redacted.contains("devin-session-token$abcdefghijklmnopqrstuvwxyz123456"),
+            "Devin session token should be redacted, got: {}",
+            redacted
+        );
+        assert!(
+            redacted.contains("devi...3456"),
+            "Devin session token should use first4...last4 redaction, got: {}",
+            redacted
+        );
     }
 
     #[test]
@@ -3396,6 +4746,22 @@ mod tests {
     }
 
     #[test]
+    fn redact_body_redacts_profile_arn_fields() {
+        let body = r#"{"profileArn":"arn:aws:codewhisperer:us-east-1:699475941385:profile/EHGA3GRVQMUK","profile_arn":"arn:aws:codewhisperer:us-east-1:699475941385:profile/EHGA3GRVQMUK"}"#;
+        let redacted = redact_body(body);
+        assert!(
+            !redacted.contains("699475941385"),
+            "profile arn should be redacted, got: {}",
+            redacted
+        );
+        assert!(
+            redacted.contains("arn:...QMUK"),
+            "profile arn should use first4...last4 redaction, got: {}",
+            redacted
+        );
+    }
+
+    #[test]
     fn redact_body_redacts_camel_case_user_and_account_ids() {
         let body = r#"{"userId": "user_abcdefghijklmnopqrstuvwxyz", "accountId": "acct_1234567890abcdef"}"#;
         let redacted = redact_body(body);
@@ -3417,6 +4783,42 @@ mod tests {
         assert!(
             redacted.contains("acct...cdef"),
             "accountId should show first4...last4, got: {}",
+            redacted
+        );
+    }
+
+    #[test]
+    fn redact_body_redacts_devin_org_and_account_display_name() {
+        let body = r#"{"orgId":"org-6b6e9de248db472bb25b296599ea3dc0","accountDisplayName":"rob@sunstory.com","devinInfo":{"org_id":"org-abcdef1234567890","account_display_name":"team@example.com"}}"#;
+        let redacted = redact_body(body);
+        assert!(
+            !redacted.contains("org-6b6e9de248db472bb25b296599ea3dc0"),
+            "orgId should be redacted, got: {}",
+            redacted
+        );
+        assert!(
+            !redacted.contains("rob@sunstory.com"),
+            "accountDisplayName should be redacted, got: {}",
+            redacted
+        );
+        assert!(
+            !redacted.contains("org-abcdef1234567890"),
+            "org_id should be redacted, got: {}",
+            redacted
+        );
+        assert!(
+            !redacted.contains("team@example.com"),
+            "account_display_name should be redacted, got: {}",
+            redacted
+        );
+        assert!(
+            redacted.contains("org-...3dc0"),
+            "orgId should show first4...last4, got: {}",
+            redacted
+        );
+        assert!(
+            redacted.contains("rob@....com"),
+            "accountDisplayName should show first4...last4, got: {}",
             redacted
         );
     }
@@ -3453,22 +4855,6 @@ mod tests {
     }
 
     #[test]
-    fn redact_body_redacts_profile_arn_fields() {
-        let body = r#"{"profileArn":"arn:aws:codewhisperer:us-east-1:699475941385:profile/EHGA3GRVQMUK","profile_arn":"arn:aws:codewhisperer:us-east-1:699475941385:profile/EHGA3GRVQMUK"}"#;
-        let redacted = redact_body(body);
-        assert!(
-            !redacted.contains("699475941385"),
-            "profile arn should be redacted, got: {}",
-            redacted
-        );
-        assert!(
-            redacted.contains("arn:...QMUK"),
-            "profile arn should use first4...last4 redaction, got: {}",
-            redacted
-        );
-    }
-
-    #[test]
     fn redact_log_message_redacts_jwt_and_api_key() {
         let msg = "token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U key=sk-1234567890abcdef";
         let redacted = redact_log_message(msg);
@@ -3479,6 +4865,33 @@ mod tests {
         assert!(
             !redacted.contains("sk-1234567890abcdef"),
             "API key should be redacted"
+        );
+    }
+
+    #[test]
+    fn redact_log_message_redacts_email() {
+        let msg = "settings page contained person@example.com";
+        let redacted = redact_log_message(msg);
+        assert!(
+            !redacted.contains("person@example.com"),
+            "email should be redacted"
+        );
+        assert!(redacted.contains("pers....com"));
+    }
+
+    #[test]
+    fn redact_log_message_redacts_devin_session_token() {
+        let msg = "auth=devin-session-token$abcdefghijklmnopqrstuvwxyz123456";
+        let redacted = redact_log_message(msg);
+        assert!(
+            !redacted.contains("devin-session-token$abcdefghijklmnopqrstuvwxyz123456"),
+            "Devin session token should be redacted, got: {}",
+            redacted
+        );
+        assert!(
+            redacted.contains("devi...3456"),
+            "Devin session token should use first4...last4 redaction, got: {}",
+            redacted
         );
     }
 
@@ -3871,8 +5284,6 @@ mod tests {
                 home.join(".bun/bin"),
                 home.join(".nvm/current/bin"),
                 home.join(".local/bin"),
-                home.join(".cargo/bin"),
-                home.join(".asdf/shims"),
                 std::path::PathBuf::from("/opt/homebrew/bin"),
                 std::path::PathBuf::from("/usr/local/bin"),
                 std::path::PathBuf::from("/usr/bin"),
@@ -3897,7 +5308,6 @@ mod tests {
             vec![
                 std::path::PathBuf::from("/opt/homebrew/bin"),
                 std::path::PathBuf::from("/usr/local/bin"),
-                std::path::PathBuf::from("/usr/bin"),
                 std::path::PathBuf::from("/custom/bin"),
             ]
         );
@@ -3913,7 +5323,6 @@ mod tests {
             vec![
                 std::path::PathBuf::from("/opt/homebrew/bin"),
                 std::path::PathBuf::from("/usr/local/bin"),
-                std::path::PathBuf::from("/usr/bin"),
             ]
         );
     }
@@ -3938,8 +5347,6 @@ mod tests {
                 home.join(".bun/bin"),
                 home.join(".nvm/current/bin"),
                 home.join(".local/bin"),
-                home.join(".cargo/bin"),
-                home.join(".asdf/shims"),
                 std::path::PathBuf::from("/opt/homebrew/bin"),
                 std::path::PathBuf::from("/usr/local/bin"),
                 std::path::PathBuf::from("/usr/bin"),
@@ -4044,21 +5451,29 @@ mod tests {
         };
         assert_eq!(
             resolve_ccusage_provider(&opts_explicit, "claude"),
-            CcusageProvider::Codex
+            Some(CcusageProvider::Codex)
         );
 
         let opts_empty = CcusageQueryOpts::default();
         assert_eq!(
             resolve_ccusage_provider(&opts_empty, "codex"),
-            CcusageProvider::Codex
+            Some(CcusageProvider::Codex)
         );
         assert_eq!(
             resolve_ccusage_provider(&opts_empty, "claude"),
-            CcusageProvider::Claude
+            Some(CcusageProvider::Claude)
         );
         assert_eq!(
             resolve_ccusage_provider(&opts_empty, "unknown-provider"),
-            CcusageProvider::Claude
+            None
+        );
+        assert_eq!(
+            resolve_ccusage_provider(&opts_empty, "kimi"),
+            Some(CcusageProvider::Kimi)
+        );
+        assert_eq!(
+            resolve_ccusage_provider(&opts_empty, "opencode-go"),
+            Some(CcusageProvider::OpenCode)
         );
     }
 
@@ -4235,12 +5650,12 @@ esac
         script
             .write_all(script_body.as_bytes())
             .expect("write script");
-        let mut permissions = script.metadata().expect("script metadata").permissions();
+        drop(script);
+        let mut permissions = std::fs::metadata(&script_path)
+            .expect("script metadata")
+            .permissions();
         permissions.set_mode(0o755);
         std::fs::set_permissions(&script_path, permissions).expect("make script executable");
-        // Close the file handle before exec: Linux returns ETXTBSY when running
-        // a file that is still open for writing.
-        drop(script);
 
         let opts = CcusageQueryOpts {
             provider: Some("codex".to_string()),
@@ -4280,55 +5695,15 @@ esac
         );
     }
 
-    #[test]
-    fn probe_deadline_clamps_host_timeout_to_remaining_budget() {
-        let deadline = ProbeDeadline::at(Instant::now() + Duration::from_millis(25));
-        let clamped = deadline
-            .clamp_duration(Duration::from_secs(10))
-            .expect("remaining budget should produce a host timeout");
-
-        assert!(
-            clamped <= Duration::from_millis(25),
-            "host timeout should not exceed remaining probe budget"
-        );
-        assert!(
-            clamped >= Duration::from_millis(1),
-            "host timeout should stay non-zero for blocking clients"
-        );
-    }
-
-    #[test]
-    fn probe_deadline_does_not_extend_elapsed_budget() {
-        let deadline = ProbeDeadline::at(Instant::now());
-
-        assert_eq!(deadline.clamp_duration(Duration::from_secs(10)), None);
-    }
-
     #[cfg(unix)]
     #[test]
     fn ccusage_timeout_kills_descendant_and_closes_pipes() {
         use std::io::Write;
         use std::os::unix::fs::PermissionsExt;
-        use std::path::Path;
         use std::time::{Duration, Instant};
 
         fn pid_exists(pid: i32) -> bool {
             unsafe { libc::kill(pid, 0) == 0 }
-        }
-
-        fn read_pid_file(path: &Path, deadline: Instant) -> i32 {
-            loop {
-                if let Ok(pid_text) = std::fs::read_to_string(path) {
-                    let pid_text = pid_text.trim();
-                    if !pid_text.is_empty() {
-                        return pid_text.parse().expect("parse descendant pid");
-                    }
-                }
-                if Instant::now() >= deadline {
-                    panic!("descendant pid file was not created at {}", path.display());
-                }
-                std::thread::sleep(Duration::from_millis(20));
-            }
         }
 
         let test_id = format!(
@@ -4356,12 +5731,12 @@ wait
         script
             .write_all(script_body.as_bytes())
             .expect("write script");
-        let mut permissions = script.metadata().expect("script metadata").permissions();
+        drop(script);
+        let mut permissions = std::fs::metadata(&script_path)
+            .expect("script metadata")
+            .permissions();
         permissions.set_mode(0o755);
         std::fs::set_permissions(&script_path, permissions).expect("make script executable");
-        // Close the file handle before exec: Linux returns ETXTBSY when running
-        // a file that is still open for writing.
-        drop(script);
 
         let opts = CcusageQueryOpts::default();
         let start = Instant::now();
@@ -4372,7 +5747,7 @@ wait
             CcusageProvider::Codex,
             "codex",
             CcusageCommandFlavor::Current,
-            Duration::from_secs(1),
+            Duration::from_millis(500),
         );
 
         assert_eq!(result, CcusageRunnerResult::TimedOut);
@@ -4381,7 +5756,16 @@ wait
             "timeout cleanup should not hang on inherited stdout/stderr pipes"
         );
 
-        let descendant_pid = read_pid_file(&pid_path, Instant::now() + Duration::from_secs(1));
+        let pid_deadline = Instant::now() + Duration::from_secs(2);
+        while !pid_path.exists() && Instant::now() < pid_deadline {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+
+        let descendant_pid: i32 = std::fs::read_to_string(&pid_path)
+            .expect("read descendant pid")
+            .trim()
+            .parse()
+            .expect("parse descendant pid");
 
         let deadline = Instant::now() + Duration::from_secs(2);
         while pid_exists(descendant_pid) && Instant::now() < deadline {

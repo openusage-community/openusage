@@ -37,7 +37,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: swatinem/rust-cache@v2
         with:
-          workspaces: "./src-tauri -> target"
+          workspaces: ". -> target"
 
       - name: Install Linux dependencies
         run: |
@@ -59,12 +59,10 @@ jobs:
         run: bun run bundle:plugins
 
       - name: Cargo fmt
-        working-directory: src-tauri
         run: cargo fmt --all -- --check
 
       - name: Cargo test
-        working-directory: src-tauri
-        run: cargo test --locked
+        run: cargo test --workspace --locked
 
   linux-package:
     name: Linux Tauri package build
@@ -80,7 +78,7 @@ jobs:
           targets: x86_64-unknown-linux-gnu
       - uses: swatinem/rust-cache@v2
         with:
-          workspaces: "./src-tauri -> target"
+          workspaces: ". -> target"
 
       - name: Install Linux dependencies
         run: |
@@ -102,21 +100,25 @@ jobs:
       - run: bun install --frozen-lockfile
 
       - name: Build Linux packages
+        env:
+          # linuxdeploy's bundled strip can fail on newer distro libraries with
+          # `.relr.dyn` sections. Packaging does not require stripping here.
+          NO_STRIP: "true"
         run: |
           bun tauri build --ci --no-sign --bundles deb,rpm,appimage \
             --config '{"bundle":{"createUpdaterArtifacts":false}}'
 
       - name: Verify Linux package artifacts
         run: |
-          test -n "$(find src-tauri/target/release/bundle/deb -maxdepth 1 -name '*.deb' -print -quit)"
-          test -n "$(find src-tauri/target/release/bundle/rpm -maxdepth 1 -name '*.rpm' -print -quit)"
-          test -n "$(find src-tauri/target/release/bundle/appimage -maxdepth 1 -name '*.AppImage' -print -quit)"
+          test -n "$(find target/release/bundle/deb -maxdepth 1 -name '*.deb' -print -quit)"
+          test -n "$(find target/release/bundle/rpm -maxdepth 1 -name '*.rpm' -print -quit)"
+          test -n "$(find target/release/bundle/appimage -maxdepth 1 -name '*.AppImage' -print -quit)"
 
       - name: Inspect Linux packages
         run: |
-          DEB=$(find src-tauri/target/release/bundle/deb -maxdepth 1 -name '*.deb' -print -quit)
-          RPM=$(find src-tauri/target/release/bundle/rpm -maxdepth 1 -name '*.rpm' -print -quit)
-          APPIMAGE=$(find src-tauri/target/release/bundle/appimage -maxdepth 1 -name '*.AppImage' -print -quit)
+          DEB=$(find target/release/bundle/deb -maxdepth 1 -name '*.deb' -print -quit)
+          RPM=$(find target/release/bundle/rpm -maxdepth 1 -name '*.rpm' -print -quit)
+          APPIMAGE=$(find target/release/bundle/appimage -maxdepth 1 -name '*.AppImage' -print -quit)
 
           dpkg-deb --info "$DEB"
           dpkg-deb --contents "$DEB" | grep -E 'OpenUsage|openusage|\.desktop'

@@ -21,7 +21,10 @@ if (!VERSION_RE.test(version)) {
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(scriptDir, "..");
 
-const hostApiPath = path.join(repoRoot, "src-tauri/src/plugin_engine/host_api.rs");
+const hostApiPath = path.join(
+  repoRoot,
+  "crates/openusage-core/src/plugin_engine/host_api.rs",
+);
 const docsPath = path.join(repoRoot, "docs/plugins/api.md");
 
 function replaceOnce(content, regex, replacement, missingMessage) {

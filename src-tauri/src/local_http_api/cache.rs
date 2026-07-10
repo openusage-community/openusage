@@ -353,11 +353,15 @@ mod tests {
             provider_id: id.to_string(),
             display_name: name.to_string(),
             plan: Some("Pro".to_string()),
+            warning: None,
             lines: vec![MetricLine::Text {
                 label: "Usage".to_string(),
                 value: "42%".to_string(),
                 color: None,
                 subtitle: None,
+                model_breakdown: None,
+                status_dot: None,
+                expiry_tooltip: None,
             }],
             icon_url: String::new(),
         }

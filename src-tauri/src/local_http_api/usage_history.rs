@@ -279,6 +279,31 @@ fn row_from_line(snapshot: &UsageHistorySnapshot, line: MetricLine) -> ExportRow
             value: text,
             reset_at: String::new(),
         },
+        MetricLine::BarChart {
+            label,
+            points,
+            note,
+            ..
+        } => {
+            let value = serde_json::json!({
+                "points": points,
+                "note": note,
+            })
+            .to_string();
+            ExportRow {
+                fetched_at: snapshot.fetched_at.clone(),
+                provider_id: snapshot.provider_id.clone(),
+                provider_name: snapshot.display_name.clone(),
+                plan: snapshot.plan.clone().unwrap_or_default(),
+                line_type: "barChart".to_string(),
+                metric: label,
+                used: None,
+                limit: None,
+                unit: String::new(),
+                value,
+                reset_at: String::new(),
+            }
+        }
     }
 }
 
@@ -555,6 +580,7 @@ mod tests {
             provider_id: id.to_string(),
             display_name: format!("Provider {}", id),
             plan: Some("Pro".to_string()),
+            warning: None,
             lines: vec![
                 MetricLine::Progress {
                     label: "Session".to_string(),
@@ -570,6 +596,9 @@ mod tests {
                     value: "$12.34 · 56K tokens".to_string(),
                     color: None,
                     subtitle: None,
+                    model_breakdown: None,
+                    status_dot: None,
+                    expiry_tooltip: None,
                 },
             ],
             icon_url: String::new(),
@@ -581,6 +610,7 @@ mod tests {
             provider_id: id.to_string(),
             display_name: format!("Provider {}", id),
             plan: None,
+            warning: None,
             lines: vec![MetricLine::Badge {
                 label: "Error".to_string(),
                 text: "Failed".to_string(),
@@ -641,11 +671,15 @@ mod tests {
             provider_id: "claude".to_string(),
             display_name: "Claude, Inc".to_string(),
             plan: Some("Team \"Pro\"".to_string()),
+            warning: None,
             lines: vec![MetricLine::Text {
                 label: "Today".to_string(),
                 value: "line one\nline two".to_string(),
                 color: None,
                 subtitle: None,
+                model_breakdown: None,
+                status_dot: None,
+                expiry_tooltip: None,
             }],
             icon_url: String::new(),
         };

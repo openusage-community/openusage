@@ -119,7 +119,7 @@ jobs:
       - name: Verify macOS app bundle
         if: runner.os == 'macOS'
         run: |
-          APP=$(find src-tauri/target -path '*/release/bundle/macos/OpenUsage.app' -print -quit)
+          APP=$(find target -path '*/release/bundle/macos/OpenUsage.app' -print -quit)
           if [[ -z "$APP" ]]; then
             echo "Missing macOS app bundle."
             exit 1

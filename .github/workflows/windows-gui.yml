@@ -1,0 +1,61 @@
+# Windows support adapted from barramee27/crossusage (MIT): https://github.com/barramee27/crossusage
+# Build the Windows Tauri GUI (NSIS installer + openusage.exe) and upload artifacts.
+# Use this to get fresh .exe builds without tagging a release.
+#
+# After push: GitHub → Actions → "Windows GUI (Tauri)" → Run workflow.
+# Download the artifact zip from the completed run and copy into your VM.
+name: Windows GUI (Tauri)
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          shared-key: openusage-windows-gui
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install JS deps
+        run: bun install
+
+      - name: Build Tauri (Windows GUI + NSIS)
+        shell: bash
+        run: |
+          bun run tauri build --ci --no-sign \
+            --config '{"bundle":{"createUpdaterArtifacts":false}}'
+
+      - name: Build portable Windows zip
+        shell: pwsh
+        run: ./scripts/build-gui-portable-windows.ps1
+
+      - name: Upload Windows GUI artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: openusage-windows-gui-${{ github.sha }}
+          retention-days: 21
+          path: |
+            target/release/bundle/nsis/*.exe
+            target/release/openusage.exe
+            target/release/openusage-cli.exe
+            target/release/WebView2Loader.dll
+            target/*/release/openusage.exe
+            target/*/release/openusage-cli.exe
+            target/*/release/WebView2Loader.dll
+            src-tauri/binaries/openusage-cli-*.exe
+            openusage_*_windows_*.zip

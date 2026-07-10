@@ -20,7 +20,7 @@ export default defineConfig(async () => ({
     environment: "jsdom",
     setupFiles: ["./src/test/setup.ts"],
     include: ["src/**/*.test.{ts,tsx}", "plugins/**/*.test.js"],
-    exclude: ["**/node_modules/**", "**/src-tauri/target/**"],
+    exclude: ["**/node_modules/**", "**/target/**", "**/src-tauri/target/**"],
     clearMocks: true,
     mockReset: true,
     restoreMocks: true,

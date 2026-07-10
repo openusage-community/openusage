@@ -58,7 +58,7 @@ Unknown routes return **404 Not Found**.
 }
 ```
 
-The `lines` array uses the same metric line types as the internal plugin output: `progress`, `text`, and `badge`.
+The `lines` array uses the same metric line types as the internal plugin output: `progress`, `text`, `badge`, and `barChart`.
 
 `fetchedAt` is an ISO 8601 timestamp indicating when the snapshot was last successfully fetched.
 

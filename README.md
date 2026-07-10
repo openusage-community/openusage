@@ -10,7 +10,7 @@
 
 OpenUsage Community is an independent, community-maintained continuation of the original [OpenUsage](https://github.com/robinebers/openusage) project.
 
-The goal of this fork is to continue the cross-platform Tauri-based direction with official Linux support, best-effort macOS support, and room for future Windows support.
+The goal of this fork is to continue the cross-platform Tauri-based direction with official Linux support, Windows support, best-effort macOS support, and simple provider maintenance.
 
 See your usage at a glance from your menu bar or system tray. No digging through dashboards.
 
@@ -21,6 +21,7 @@ See your usage at a glance from your menu bar or system tray. No digging through
 OpenUsage Community is currently focused on:
 
 * Official Linux support
+* Windows installer and portable builds
 * Stable AppImage, `.deb`, and `.rpm` releases
 * System tray behavior across different Linux desktop environments
 * Best-effort unsigned macOS builds through Homebrew
@@ -45,6 +46,9 @@ Available builds:
 * Linux AppImage
 * Linux `.deb`
 * Linux `.rpm`
+* Windows NSIS installer
+* Windows portable GUI zip
+* Windows CLI zip
 
 The app auto-updates where supported. Install once and you're set.
 
@@ -68,6 +72,32 @@ On desktops without StatusNotifierItem/AppIndicator support, such as GNOME witho
 On Wayland, panel positioning is best-effort and depends on the compositor. The panel appears under the tray icon where the desktop environment allows it.
 
 Reading credentials stored in the system keyring requires `secret-tool`, usually provided by the `libsecret` or `libsecret-tools` package.
+
+## Install on Windows
+
+Download the Windows installer or portable zip from the [latest release](https://github.com/openusage-community/openusage/releases/latest).
+
+Installer:
+
+```powershell
+irm https://raw.githubusercontent.com/openusage-community/openusage/main/scripts/install.ps1 | iex
+```
+
+Portable GUI zip layout:
+
+* `openusage.exe`
+* `openusage_gui.exe`
+* `openusage-cli.exe`
+* `WebView2Loader.dll`
+* `resources/`
+* `README-Windows.txt`
+
+CLI-only zip layout:
+
+* `openusage-cli.exe`
+* `resources/bundled_plugins/`
+
+Set `OPENUSAGE_RESOURCES` when running `openusage-cli` from a custom layout. Point it at a folder containing either `bundled_plugins/` or `resources/bundled_plugins/`.
 
 ## Install on Linux
 
@@ -187,13 +217,15 @@ Keep changes focused. Avoid feature creep. Do not submit AI-generated code witho
 
 OpenUsage Community is based on the original [OpenUsage](https://github.com/robinebers/openusage) project.
 
-This fork is independent and community-maintained. It continues the Tauri-based cross-platform direction, with Linux as the primary focus.
+This fork is independent and community-maintained. It continues the Tauri-based cross-platform direction across Linux, Windows, and best-effort macOS.
 
 The original project, its name, and its prior work are credited to the original author and contributors.
 
 ## Credits
 
 Based on the original [OpenUsage](https://github.com/robinebers/openusage) project by [Robin Ebers](https://github.com/robinebers).
+
+Windows support is adapted from [barramee27/crossusage](https://github.com/barramee27/crossusage) under the MIT license.
 
 Inspired by [CodexBar](https://github.com/steipete/CodexBar) by [@steipete](https://github.com/steipete).
 
@@ -238,5 +270,26 @@ OpenUsage Community is built with:
 * Rust
 * TypeScript
 * WebKitGTK on Linux
+
+### Build
+
+```sh
+bun install
+bun run bundle:plugins
+cargo test --workspace
+bun tauri build
+```
+
+The Rust code is a workspace with `src-tauri`, `crates/openusage-core`, `crates/openusage-cli`, and `crates/openusage-win-launcher`.
+
+Windows artifacts:
+
+```sh
+bun tauri build --target x86_64-pc-windows-gnu
+bun run release:gui-portable-zip-windows-gnu
+bun run release:cli-zip-windows-gnu
+```
+
+If local Windows cross-build dependencies are not installed, use the manual **Windows GUI (Tauri)** GitHub Actions workflow.
 
 </details>
