@@ -94,6 +94,7 @@ jobs:
           TAURI_CONF_VERSION=$(node -p 'require("./src-tauri/tauri.conf.json").version')
           CARGO_VERSION=$(awk -F'"' '/^version =/ { print $2; exit }' ./src-tauri/Cargo.toml)
           PKG_VERSION=$(node -p 'require("./package.json").version')
+          PKGBUILD_VERSION=$(awk -F= '/^pkgver=/ { print $2; exit }' ./packaging/PKGBUILD)
 
           if [[ "$TAURI_CONF_VERSION" != "$TAG_VERSION" ]]; then
             echo "src-tauri/tauri.conf.json version ($TAURI_CONF_VERSION) != tag version ($TAG_VERSION)"
@@ -105,6 +106,10 @@ jobs:
           fi
           if [[ "$PKG_VERSION" != "$TAG_VERSION" ]]; then
             echo "package.json version ($PKG_VERSION) != tag version ($TAG_VERSION)"
+            exit 1
+          fi
+          if [[ "$PKGBUILD_VERSION" != "$TAG_VERSION" ]]; then
+            echo "packaging/PKGBUILD pkgver ($PKGBUILD_VERSION) != tag version ($TAG_VERSION)"
             exit 1
           fi
 

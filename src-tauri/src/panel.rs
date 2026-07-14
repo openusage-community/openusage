@@ -8,8 +8,8 @@ use tauri_nspanel::{
 };
 
 use crate::panel_geometry::{
-    LogicalAnchor, LogicalMonitorBounds, PanelAnchorPosition, compute_anchor_position,
-    fallback_anchor_for_monitor,
+    LogicalAnchor, LogicalMonitorBounds, PanelAnchorPosition, bottom_right_fallback_position,
+    compute_anchor_position,
 };
 
 const PANEL_ANCHOR_OFFSET_EVENT: &str = "panel:anchor-offset";
@@ -242,26 +242,21 @@ fn compute_fallback_panel_position(app_handle: &AppHandle) -> Option<PanelAnchor
     let window = app_handle.get_webview_window("main")?;
     let monitor = window.primary_monitor().ok().flatten()?;
     let monitor_bounds = logical_bounds_from_monitor(&monitor);
-    let anchor = fallback_anchor_for_monitor(&monitor_bounds);
     let (panel_width, panel_height) = panel_size_from_window_or_config(&window);
+    let position = bottom_right_fallback_position(&monitor_bounds, panel_width, panel_height);
     log::debug!(
-        "compute_fallback_panel_position: monitor=({:.0},{:.0} {:.0}x{:.0}) anchor=({:.0},{:.0}) panel_size=({:.0}x{:.0})",
+        "compute_fallback_panel_position: monitor=({:.0},{:.0} {:.0}x{:.0}) panel_size=({:.0}x{:.0}) panel=({:.0},{:.0})",
         monitor_bounds.x,
         monitor_bounds.y,
         monitor_bounds.width,
         monitor_bounds.height,
-        anchor.center_x,
-        anchor.bottom_y,
-        panel_width,
-        panel_height
-    );
-
-    Some(compute_anchor_position(
-        &monitor_bounds,
-        anchor,
         panel_width,
         panel_height,
-    ))
+        position.x,
+        position.y
+    );
+
+    Some(position)
 }
 
 #[cfg(target_os = "linux")]

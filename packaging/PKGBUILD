@@ -1,0 +1,64 @@
+# Maintainer: OpenUsage community <https://github.com/openusage-community/openusage>
+pkgname=openusage
+# Tauri's resource_dir() resolves to /usr/lib/<productName>; productName is "OpenUsage".
+_appname=OpenUsage
+pkgver=0.6.37
+pkgrel=1
+pkgdesc="Open source AI subscription limit tracker (native build for Arch-based systems)"
+arch=('x86_64')
+url="https://github.com/openusage-community/openusage"
+license=('MIT')
+# Runtime: linked against the host's WebKitGTK/GTK stack, so it always matches the
+# host Mesa/Wayland/EGL.
+depends=('webkit2gtk-4.1' 'gtk3' 'libayatana-appindicator' 'libsecret' 'openssl'
+  'hicolor-icon-theme')
+# rust>=1.85 is required (Cargo edition 2024). bun builds and embeds the frontend.
+makedepends=('git' 'rust' 'cargo' 'bun')
+options=('!lto')
+source=("$pkgname-$pkgver::git+$url.git#tag=v$pkgver")
+sha256sums=('SKIP')
+
+prepare() {
+  cd "$srcdir/$pkgname-$pkgver"
+  bun install --frozen-lockfile
+}
+
+build() {
+  cd "$srcdir/$pkgname-$pkgver"
+  bun run tauri build --no-bundle
+}
+
+package() {
+  cd "$srcdir/$pkgname-$pkgver"
+
+  # Cargo workspace: the app binary lands in the repo-root target dir. The openusage-cli
+  # sidecar (externalBin) is built by the beforeBuildCommand into src-tauri/binaries.
+  install -Dm755 "target/release/$pkgname" "$pkgdir/usr/bin/$pkgname"
+  install -Dm755 "src-tauri/binaries/openusage-cli-x86_64-unknown-linux-gnu" "$pkgdir/usr/bin/openusage-cli"
+
+  install -d "$pkgdir/usr/lib/$_appname/resources"
+  cp -r src-tauri/resources/bundled_plugins "$pkgdir/usr/lib/$_appname/resources/"
+  install -Dm644 src-tauri/icons/tray-icon.png "$pkgdir/usr/lib/$_appname/icons/tray-icon.png"
+
+  # Application icons.
+  for size in 32 64 128; do
+    install -Dm644 "src-tauri/icons/${size}x${size}.png" \
+      "$pkgdir/usr/share/icons/hicolor/${size}x${size}/apps/$pkgname.png"
+  done
+  install -Dm644 "src-tauri/icons/128x128@2x.png" \
+    "$pkgdir/usr/share/icons/hicolor/256x256/apps/$pkgname.png"
+
+  install -Dm644 /dev/stdin "$pkgdir/usr/share/applications/$_appname.desktop" <<'DESKTOP'
+[Desktop Entry]
+Type=Application
+Name=OpenUsage
+Comment=OpenUsage is an open source AI subscription limit tracker
+Exec=openusage
+Icon=openusage
+Terminal=false
+Categories=Utility;
+StartupWMClass=openusage
+DESKTOP
+
+  install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}
