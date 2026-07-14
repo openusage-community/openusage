@@ -246,6 +246,9 @@ export function useTrayIcon({
       const style = menubarIconStyleRef.current
       const sizePx = getTrayIconSizePx(window.devicePixelRatio)
       const foregroundColor = trayForegroundColorRef.current
+      // Linux/SNI tray slots are square; render a square icon instead of the wide
+      // macOS-menu-bar layout (which the compositor scales down until it's tiny).
+      const square = isLinuxTrayRef.current
       const nextActiveView = activeViewRef.current
       const activeProviderId =
         nextActiveView !== "home" && nextActiveView !== "settings" ? nextActiveView : null
@@ -312,6 +315,7 @@ export function useTrayIcon({
           sizePx,
           style: "bars",
           foregroundColor,
+          square,
         })
           .then(async (img) => {
             if (!isCurrentUpdate()) return
@@ -342,6 +346,7 @@ export function useTrayIcon({
           style: "donut",
           providerIconUrl,
           foregroundColor,
+          square,
         })
           .then(async (img) => {
             if (!isCurrentUpdate()) return
@@ -366,6 +371,7 @@ export function useTrayIcon({
         percentText: supportsNativeTrayTitle ? undefined : providerPercentText,
         providerIconUrl,
         foregroundColor,
+        square,
       })
         .then(async (img) => {
           if (!isCurrentUpdate()) return

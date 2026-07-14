@@ -50,3 +50,5 @@ openusage-cli_*.tar.gz
 src-tauri/binaries/
 src-tauri/resources/bundled_plugins/*
 !src-tauri/resources/bundled_plugins/.gitkeep
+/packaging/*.zst
+/packaging/pkg/
