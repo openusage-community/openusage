@@ -3812,7 +3812,7 @@ dependencies = [
 
 [[package]]
 name = "openusage"
-version = "0.6.37"
+version = "0.6.38"
 dependencies = [
  "dirs 6.0.0",
  "gtk",
@@ -3850,7 +3850,7 @@ dependencies = [
 
 [[package]]
 name = "openusage-cli"
-version = "0.6.37"
+version = "0.6.38"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -3882,7 +3882,7 @@ dependencies = [
 
 [[package]]
 name = "openusage-core"
-version = "0.6.37"
+version = "0.6.38"
 dependencies = [
  "aes-gcm",
  "anyhow",

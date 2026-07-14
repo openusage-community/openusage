@@ -24,6 +24,9 @@ jobs:
           - platform: ubuntu-22.04
             args: ""
             rust_targets: "x86_64-unknown-linux-gnu"
+          - platform: windows-latest
+            args: "--bundles nsis"
+            rust_targets: "x86_64-pc-windows-msvc"
     runs-on: ${{ matrix.platform }}
     env:
       RELEASE_TAG: ${{ github.ref_name }}
@@ -63,6 +66,7 @@ jobs:
       - name: Bundle plugins
         run: bun run bundle:plugins
       - name: Verify bundled plugins
+        shell: bash
         run: |
           COUNT=$(find src-tauri/resources/bundled_plugins -maxdepth 2 -name plugin.json | wc -l | tr -d ' ')
           if [[ "$COUNT" -lt 1 ]]; then
@@ -71,6 +75,7 @@ jobs:
           fi
 
       - name: Validate release tag
+        shell: bash
         run: |
           if [[ -z "$RELEASE_TAG" ]]; then
             echo "Missing RELEASE_TAG (push a v* tag)."
@@ -82,6 +87,7 @@ jobs:
           fi
 
       - name: Validate app version matches tag
+        shell: bash
         run: |
           TAG_VERSION="${RELEASE_TAG#v}"
 
@@ -116,6 +122,18 @@ jobs:
           includeUpdaterJson: true
           args: ${{ matrix.args }}
 
+      - name: Build portable Windows zip
+        if: matrix.platform == 'windows-latest'
+        shell: pwsh
+        run: ./scripts/build-gui-portable-windows.ps1
+
+      - name: Upload portable Windows zip
+        if: matrix.platform == 'windows-latest'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload "$RELEASE_TAG" openusage_*_windows_*.zip --clobber
+
       - name: Verify macOS app bundle
         if: runner.os == 'macOS'
         run: |
@@ -128,6 +146,7 @@ jobs:
           test -x "$APP/Contents/MacOS/openusage"
 
       - name: Verify updater assets uploaded
+        shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |

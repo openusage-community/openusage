@@ -1,5 +1,18 @@
 # Changelog
 
+## v0.6.38
+
+### New Features
+- add Windows NSIS and portable ZIP release packages
+
+---
+
+### Changelog
+
+**Full Changelog**: [v0.6.37...v0.6.38](https://github.com/openusage-community/openusage/compare/v0.6.37...v0.6.38)
+
+- [eadcfe5](https://github.com/openusage-community/openusage/commit/eadcfe5) feat: port crossusage windows support (#22)
+
 ## v0.6.37
 
 ### Bug Fixes
