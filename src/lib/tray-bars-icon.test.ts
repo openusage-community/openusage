@@ -266,7 +266,7 @@ describe("tray-bars-icon", () => {
     }
   })
 
-  it("renderTrayBarsIcon uses stable image width across menubar styles", async () => {
+  it("renderTrayBarsIcon stabilizes provider width but keeps donut/bars natural", async () => {
     const originalImage = window.Image
     const originalCreateElement = document.createElement.bind(document)
 
@@ -300,10 +300,16 @@ describe("tray-bars-icon", () => {
 
     try {
       await renderTrayBarsIcon({
-        bars: [{ id: "a", fraction: 0.97 }],
+        bars: [{ id: "a", fraction: 0.09 }],
         sizePx: 36,
         style: "provider",
-        percentText: "97%",
+        percentText: "9%",
+      })
+      await renderTrayBarsIcon({
+        bars: [{ id: "a", fraction: 1 }],
+        sizePx: 36,
+        style: "provider",
+        percentText: "100%",
       })
       await renderTrayBarsIcon({
         bars: [{ id: "a", fraction: 0.97 }],
@@ -316,8 +322,17 @@ describe("tray-bars-icon", () => {
         style: "bars",
       })
 
-      const widths = vi.mocked(Image.new).mock.calls.map((call) => call[1])
-      expect(new Set(widths).size).toBe(1)
+      const [provider9, provider100, donut, bars] = vi
+        .mocked(Image.new)
+        .mock.calls.map((call) => call[1])
+
+      // provider keeps a fixed width so the tray anchor does not shift as the number changes
+      expect(provider9).toBe(provider100)
+      // text-free styles keep their natural width instead of being padded to provider width
+      expect(donut).toBeLessThan(provider100 as number)
+      // donut is logo + ring side by side at 72% each: 2 + 26 + 4 + 26 + 2
+      expect(donut).toBe(60)
+      expect(bars).toBe(36)
     } finally {
       window.Image = originalImage
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
