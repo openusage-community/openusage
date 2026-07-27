@@ -302,5 +302,46 @@ describe("getTrayPrimaryBars", () => {
     })
     expect(bars).toEqual([])
   })
+
+  it("falls back to the first progress line when no declared candidate is present", () => {
+    // Usage-based Codex plans report only "Credits", never the declared "Session"
+    // candidate. Without a fallback the tray renders "--%" instead of a real number.
+    const bars = getTrayPrimaryBars({
+      pluginsMeta: [
+        {
+          id: "codex",
+          name: "Codex",
+          iconUrl: "",
+          primaryCandidates: ["Session"],
+          lines: [],
+        },
+      ],
+      pluginSettings: { order: ["codex"], disabled: [] },
+      pluginStates: {
+        codex: {
+          data: {
+            providerId: "codex",
+            displayName: "Codex",
+            iconUrl: "",
+            lines: [
+              {
+                type: "progress",
+                label: "Credits",
+                used: 1000,
+                limit: 1000,
+                format: { kind: "count", suffix: "credits" },
+              },
+            ],
+          },
+          loading: false,
+          error: null,
+        },
+      },
+      displayMode: "left",
+    })
+
+    // 1000 of 1000 used, "left" mode -> 0 remaining -> 0%, not undefined
+    expect(bars).toEqual([{ id: "codex", fraction: 0 }])
+  })
 })
 
