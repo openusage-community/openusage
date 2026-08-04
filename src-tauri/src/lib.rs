@@ -3,9 +3,7 @@ mod app_nap;
 mod config;
 mod error_logs;
 #[cfg(target_os = "linux")]
-mod gnome_extension_override;
-#[cfg(target_os = "linux")]
-mod gnome_window_anchor;
+mod gnome_anchor_extension;
 mod local_http_api;
 #[cfg(not(target_os = "windows"))]
 mod panel;
@@ -676,7 +674,7 @@ pub fn run() {
             local_http_api::start_server(app.handle().clone());
 
             #[cfg(target_os = "linux")]
-            gnome_window_anchor::install_if_gnome_session();
+            gnome_anchor_extension::install_if_gnome_session();
 
             tray::create(app.handle())?;
 

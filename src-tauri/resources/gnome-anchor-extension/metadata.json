@@ -1,0 +1,6 @@
+{
+  "uuid": "openusage-anchor@openusage.app",
+  "name": "OpenUsage Window Anchor",
+  "description": "Opens OpenUsage next to its panel icon.",
+  "shell-version": ["45", "46", "47", "48", "49", "50"]
+}
