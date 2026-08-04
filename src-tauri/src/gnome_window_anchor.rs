@@ -1,8 +1,9 @@
-use std::path::PathBuf;
 use std::process::Command;
 
+use crate::gnome_extension_override::{self, OverrideStatus};
+
 const APPINDICATOR_UUID: &str = "appindicatorsupport@rgcjonas.gmail.com";
-const INDICATOR_FILE: &str = "indicatorStatusIcon.js";
+const ZORIN_APPINDICATOR_UUID: &str = "zorin-appindicator@zorinos.com";
 const PATCH_START: &str = "    // OpenUsage window anchor patch start";
 const PATCH_END: &str = "    // OpenUsage window anchor patch end";
 const PATCH_INIT_SINGLE_CALL: &str = "        this._openUsageAnchorStartTracking();\n";
@@ -159,49 +160,46 @@ pub(crate) fn install_if_gnome_session() {
         return;
     }
 
-    let Some(indicator_file) = appindicator_file() else {
-        log::warn!("GNOME window anchor: AppIndicator extension file not found");
+    let Some(user_extensions_dir) = std::env::var_os("HOME")
+        .map(|home| std::path::PathBuf::from(home).join(".local/share/gnome-shell/extensions"))
+    else {
+        log::warn!("GNOME window anchor: HOME is not set");
         return;
     };
+    let system_extensions_dir = std::path::Path::new("/usr/share/gnome-shell/extensions");
 
-    let patched = match patch_appindicator_file(&indicator_file) {
-        Ok(patched) => patched,
-        Err(error) => {
-            log::warn!("GNOME window anchor: patch failed: {}", error);
-            return;
-        }
-    };
-
-    if !patched {
-        return;
-    }
-
-    let _ = Command::new("gnome-extensions")
-        .args(["disable", APPINDICATOR_UUID])
-        .output();
-
-    match Command::new("gnome-extensions")
-        .args(["enable", APPINDICATOR_UUID])
-        .output()
-    {
-        Ok(output) if output.status.success() => {
-            log::info!("GNOME AppIndicator extension reloaded with OpenUsage window anchor");
-        }
-        Ok(output) => {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            log::warn!(
-                "GNOME window anchor: AppIndicator reload failed with status {:?}: {}",
-                output.status.code(),
-                stderr.trim()
-            );
-        }
-        Err(error) => {
-            log::warn!(
-                "GNOME window anchor: failed to run gnome-extensions: {}",
-                error
-            );
+    for uuid in [ZORIN_APPINDICATOR_UUID, APPINDICATOR_UUID] {
+        match gnome_extension_override::prepare_user_override(
+            system_extensions_dir,
+            &user_extensions_dir,
+            uuid,
+            patch_indicator_source,
+        ) {
+            Ok(OverrideStatus::NotFound) => continue,
+            Ok(OverrideStatus::Unchanged) => return,
+            Ok(OverrideStatus::Changed) => {
+                reload_extension(uuid);
+                return;
+            }
+            Ok(OverrideStatus::UnmanagedUserCopy) => {
+                log::warn!(
+                    "GNOME window anchor: refusing to overwrite user-owned extension {}",
+                    uuid
+                );
+                return;
+            }
+            Err(error) => {
+                log::warn!(
+                    "GNOME window anchor: failed to prepare user override for {}: {}",
+                    uuid,
+                    error
+                );
+                return;
+            }
         }
     }
+
+    log::warn!("GNOME window anchor: supported AppIndicator extension file not found");
 }
 
 fn is_gnome_session() -> bool {
@@ -215,65 +213,82 @@ fn is_gnome_session() -> bool {
     .any(|value| value.to_ascii_lowercase().contains("gnome"))
 }
 
-fn appindicator_file() -> Option<PathBuf> {
-    let home_file = std::env::var_os("HOME").map(|home| {
-        PathBuf::from(home)
-            .join(".local/share/gnome-shell/extensions")
-            .join(APPINDICATOR_UUID)
-            .join(INDICATOR_FILE)
-    });
-    if let Some(path) = home_file.filter(|path| path.exists()) {
-        return Some(path);
-    }
+fn reload_extension(uuid: &str) {
+    let _ = Command::new("gnome-extensions")
+        .args(["disable", uuid])
+        .output();
 
-    let system_file = PathBuf::from("/usr/share/gnome-shell/extensions")
-        .join(APPINDICATOR_UUID)
-        .join(INDICATOR_FILE);
-    system_file.exists().then_some(system_file)
+    match Command::new("gnome-extensions")
+        .args(["enable", uuid])
+        .output()
+    {
+        Ok(output) if output.status.success() => {
+            log::info!(
+                "GNOME extension {} reloaded with OpenUsage window anchor",
+                uuid
+            );
+        }
+        Ok(output) => {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            log::warn!(
+                "GNOME window anchor: failed to reload {} (status {:?}): {}",
+                uuid,
+                output.status.code(),
+                stderr.trim()
+            );
+        }
+        Err(error) => {
+            log::warn!(
+                "GNOME window anchor: failed to run gnome-extensions for {}: {}",
+                uuid,
+                error
+            );
+        }
+    }
 }
 
-fn patch_appindicator_file(path: &PathBuf) -> std::io::Result<bool> {
-    let original = std::fs::read_to_string(path)?;
+fn patch_indicator_source(original: &str) -> Result<String, String> {
     let mut patched = remove_existing_patch(&original)
         .replace(PATCH_CALL, "")
-        .replace(PATCH_INIT_SINGLE_CALL, "")
         .replace(PATCH_INIT_CALL, "")
+        .replace(PATCH_INIT_SINGLE_CALL, "")
         .replace(PATCH_DESTROY_CALL, "");
 
     if !patched.contains("import GLib from 'gi://GLib';") {
-        patched = patched.replace(
+        patched = replace_required(
+            &patched,
             "import Gio from 'gi://Gio';\n",
             "import Gio from 'gi://Gio';\nimport GLib from 'gi://GLib';\n",
-        );
+            "GLib import",
+        )?;
     }
 
-    if !patched.contains(PATCH_METHOD.trim()) {
-        patched = patched.replacen(
-            "    isReady() {",
-            &format!("{PATCH_METHOD}    isReady() {{"),
-            1,
-        );
-    }
-    if !patched.contains("this._openUsageAnchorRetryCount = 0;") {
-        patched = insert_anchor_retry_init_call(&patched);
-    }
-    if !patched.contains(PATCH_DESTROY_CALL.trim()) {
-        patched = patched.replacen(
-            "    _onDestroy() {\n        if (this._menuClient) {",
-            &format!("    _onDestroy() {{\n{PATCH_DESTROY_CALL}        if (this._menuClient) {{"),
-            1,
-        );
-    }
-    if !patched.contains(PATCH_CALL.trim()) {
-        let button_handler_start = "    vfunc_button_press_event(event) {\n";
-        let wait_double_click = "        if (this._waitDoubleClickPromise)\n            this._waitDoubleClickPromise.cancel();\n\n";
-        let button_handler_with_call =
-            format!("{button_handler_start}{wait_double_click}{PATCH_CALL}");
-        patched = patched.replace(
-            &format!("{button_handler_start}{wait_double_click}"),
-            &button_handler_with_call,
-        );
-    }
+    patched = replace_in_indicator(
+        &patched,
+        "    isReady() {",
+        &format!("{PATCH_METHOD}    isReady() {{"),
+        "IndicatorStatusIcon isReady method",
+    )?;
+    patched = replace_in_indicator(
+        &patched,
+        "        this._showIfReady();\n",
+        &format!("        this._showIfReady();\n{PATCH_INIT_CALL}"),
+        "IndicatorStatusIcon initialization",
+    )?;
+    patched = replace_in_indicator(
+        &patched,
+        "    _onDestroy() {\n        if (this._menuClient) {",
+        &format!("    _onDestroy() {{\n{PATCH_DESTROY_CALL}        if (this._menuClient) {{"),
+        "IndicatorStatusIcon destroy handler",
+    )?;
+    let button_handler_start = "    vfunc_button_press_event(event) {\n";
+    let wait_double_click = "        if (this._waitDoubleClickPromise)\n            this._waitDoubleClickPromise.cancel();\n\n";
+    patched = replace_in_indicator(
+        &patched,
+        &format!("{button_handler_start}{wait_double_click}"),
+        &format!("{button_handler_start}{wait_double_click}{PATCH_CALL}"),
+        "IndicatorStatusIcon left-click handler",
+    )?;
 
     if !patched.contains(PATCH_TRAY_BUTTON_RELEASE.trim()) {
         let original = "        this.connect('button-release-event', (_actor, event) => {\n            this._icon.click(event);\n            this.remove_style_pseudo_class('active');\n            return Clutter.EVENT_PROPAGATE;\n        });";
@@ -291,16 +306,7 @@ fn patch_appindicator_file(path: &PathBuf) -> std::io::Result<bool> {
         patched = patched.replace(original, &patched_press);
     }
 
-    if patched == original {
-        return Ok(false);
-    }
-
-    let backup = path.with_extension("js.openusage-backup");
-    if !backup.exists() {
-        let _ = std::fs::copy(path, backup);
-    }
-    std::fs::write(path, patched)?;
-    Ok(true)
+    Ok(patched)
 }
 
 fn remove_existing_patch(content: &str) -> String {
@@ -319,24 +325,64 @@ fn remove_existing_patch(content: &str) -> String {
     }
 }
 
-fn insert_anchor_retry_init_call(content: &str) -> String {
-    let marker = "this._showIfReady();\n";
-    let Some(marker_start) = content.find(marker) else {
-        return content.to_string();
-    };
-    let insert_at = marker_start + marker.len();
+fn replace_required(
+    content: &str,
+    needle: &str,
+    replacement: &str,
+    description: &str,
+) -> Result<String, String> {
+    content
+        .contains(needle)
+        .then(|| content.replacen(needle, replacement, 1))
+        .ok_or_else(|| format!("unsupported extension structure: missing {description}"))
+}
 
-    format!(
-        "{}{}{}",
-        &content[..insert_at],
-        PATCH_INIT_CALL,
-        &content[insert_at..]
-    )
+fn replace_in_indicator(
+    content: &str,
+    needle: &str,
+    replacement: &str,
+    description: &str,
+) -> Result<String, String> {
+    let marker = "export const IndicatorStatusIcon";
+    let start = content.find(marker).ok_or_else(|| {
+        "unsupported extension structure: missing IndicatorStatusIcon".to_string()
+    })?;
+    let (prefix, indicator) = content.split_at(start);
+    let replaced = replace_required(indicator, needle, replacement, description)?;
+    Ok(format!("{prefix}{replaced}"))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn supported_indicator_source() -> String {
+        r#"import Gio from 'gi://Gio';
+export const IndicatorStatusIcon = GObject.registerClass(
+class IndicatorStatusIcon extends BaseStatusIcon {
+    _init(indicator) {
+        this._indicator = indicator;
+        this._showIfReady();
+    }
+
+    _onDestroy() {
+        if (this._menuClient) {
+        }
+    }
+
+    isReady() {
+        return true;
+    }
+
+    vfunc_button_press_event(event) {
+        if (this._waitDoubleClickPromise)
+            this._waitDoubleClickPromise.cancel();
+
+    }
+});
+"#
+        .to_string()
+    }
 
     #[test]
     fn anchor_body_uses_inner_icon_actor_geometry() {
@@ -352,54 +398,29 @@ mod tests {
     }
 
     #[test]
-    fn retry_init_call_inserts_after_show_if_ready() {
-        let patched = insert_anchor_retry_init_call(
-            "    _init(indicator) {\n        this._showIfReady();\n    }\n",
-        );
+    fn patcher_injects_anchor_only_into_indicator_class() {
+        let patched = patch_indicator_source(&supported_indicator_source()).expect("patch source");
 
+        assert!(patched.contains("import GLib from 'gi://GLib';"));
         assert!(patched.contains("this._openUsageAnchorRetryCount = 0;"));
-        assert!(patched.contains(
-            "        this._showIfReady();\n        this._openUsageAnchorStartTracking();"
-        ));
+        assert!(patched.contains("_openUsageAnchorStopTracking();"));
+        assert!(patched.contains("_openUsageAnchorHandleButtonPress(event)"));
     }
 
     #[test]
-    fn patcher_replaces_old_single_init_call_with_retry_block() {
-        let path = std::env::temp_dir().join(format!(
-            "openusage-indicator-test-{}.js",
-            std::process::id()
-        ));
-        let original = format!(
-            "import Gio from 'gi://Gio';\n\
-export const IndicatorStatusIcon = GObject.registerClass(\n\
-class IndicatorStatusIcon extends BaseStatusIcon {{\n\
-    _init(indicator) {{\n\
-        this.connect('notify::visible', () => this._updateMenu());\n\n\
-        this._showIfReady();\n\
-{PATCH_INIT_SINGLE_CALL}    }}\n\n\
-    _onDestroy() {{\n\
-        if (this._menuClient) {{\n\
-        }}\n\
-    }}\n\n\
-    vfunc_event(event) {{\n\
-    }}\n\n\
-    vfunc_button_press_event(event) {{\n\
-        if (this._waitDoubleClickPromise)\n\
-            this._waitDoubleClickPromise.cancel();\n\n\
-    }}\n\
-}});\n"
-        );
+    fn patcher_replaces_its_previous_patch_without_duplicate_handlers() {
+        let once = patch_indicator_source(&supported_indicator_source()).expect("first patch");
+        let twice = patch_indicator_source(&once).expect("second patch");
 
-        std::fs::write(&path, original).expect("write fixture");
-        patch_appindicator_file(&path).expect("patch");
-        let patched = std::fs::read_to_string(&path).expect("read patched");
-        let _ = std::fs::remove_file(&path);
-        let _ = std::fs::remove_file(path.with_extension("js.openusage-backup"));
+        assert_eq!(twice.matches("_openUsageAnchorStartTracking();").count(), 2);
+    }
 
-        assert!(patched.contains("this._openUsageAnchorRetryCount = 0;"));
-        assert_eq!(
-            patched.matches("_openUsageAnchorStartTracking();").count(),
-            2
-        );
+    #[test]
+    fn patcher_rejects_unknown_indicator_structure() {
+        let source =
+            supported_indicator_source().replace("    vfunc_button_press_event(event) {\n", "");
+        let error = patch_indicator_source(&source).expect_err("reject unknown structure");
+
+        assert!(error.contains("left-click handler"));
     }
 }

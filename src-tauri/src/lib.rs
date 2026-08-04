@@ -3,6 +3,8 @@ mod app_nap;
 mod config;
 mod error_logs;
 #[cfg(target_os = "linux")]
+mod gnome_extension_override;
+#[cfg(target_os = "linux")]
 mod gnome_window_anchor;
 mod local_http_api;
 #[cfg(not(target_os = "windows"))]
