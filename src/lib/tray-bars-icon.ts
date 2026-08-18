@@ -150,6 +150,7 @@ function getSvgLayout(args: {
   sizePx: number
   style: MenubarIconStyle
   percentText?: string
+  square?: boolean
 }): {
   width: number
   height: number
@@ -161,7 +162,7 @@ function getSvgLayout(args: {
   textY: number
   fontSize: number
 } {
-  const { sizePx, style, percentText } = args
+  const { sizePx, style, percentText, square } = args
   const hasPercentText = typeof percentText === "string" && percentText.length > 0
   const verticalNudgePx = 1
   const pad = Math.max(1, Math.round(sizePx * 0.08)) // ~2px at 24–36px
@@ -174,6 +175,22 @@ function getSvgLayout(args: {
   const textWidth = hasPercentText ? estimateTextWidthPx(percentText, fontSize) : 0
   // Optical correction + global nudge down to align with the tray slot center.
   const textY = Math.round(sizePx / 2) + 1 + verticalNudgePx
+
+  if (square) {
+    // Linux/SNI tray slots are square and fixed-size; a wide macOS-menu-bar layout gets
+    // scaled down to fit and looks tiny. Every style is drawn in a sizePx × sizePx box.
+    return {
+      width: sizePx,
+      height,
+      pad,
+      gap,
+      barsX,
+      barsWidth,
+      textX: 0,
+      textY,
+      fontSize,
+    }
+  }
 
   if (style === "donut") {
     const donutGap = Math.max(1, Math.round(sizePx * 0.06))
@@ -236,6 +253,7 @@ export function makeTrayBarsSvg(args: {
   percentText?: string
   providerIconUrl?: string
   foregroundColor?: string
+  square?: boolean
 }): string {
   const {
     bars,
@@ -244,16 +262,20 @@ export function makeTrayBarsSvg(args: {
     percentText,
     providerIconUrl,
     foregroundColor = "black",
+    square = false,
   } = args
   const fg = foregroundColor.trim().length > 0 ? foregroundColor : "black"
   const barsForStyle = getBarsForStyle(style, bars)
   // Keep bars visually stable during loading and with a single provider.
   const n = Math.max(1, Math.min(4, barsForStyle.length || 1))
-  const text = style === "bars" ? undefined : normalizePercentText(percentText)
+  // Square (Linux) icons never bake the percent text — there is no horizontal room in a
+  // square slot; the percentage lives in the tooltip instead.
+  const text = square || style === "bars" ? undefined : normalizePercentText(percentText)
   const layout = getSvgLayout({
     sizePx,
     style,
     percentText: text,
+    square,
   })
 
   const width = layout.width
@@ -285,6 +307,39 @@ export function makeTrayBarsSvg(args: {
       parts.push(
         `<circle cx="${cx}" cy="${cy}" r="${radius}" fill="none" stroke="${fg}" stroke-width="${strokeW}" opacity="1" shape-rendering="geometricPrecision" />`
       )
+    }
+  } else if (style === "donut" && square) {
+    // Square (Linux) donut: a single centered ring gauge with the provider logo inside,
+    // filling the square slot instead of the macOS icon-beside-ring layout.
+    const chartSize = Math.max(6, sizePx - 2 * layout.pad)
+    const cx = sizePx / 2
+    const cy = height / 2 + 1
+    const strokeW = Math.max(2, Math.round(chartSize * 0.16))
+    const radius = Math.max(1, Math.floor(chartSize / 2 - strokeW / 2) + 0.5)
+
+    const href =
+      typeof providerIconUrl === "string" ? themeSvgDataUrl(providerIconUrl.trim(), fg) : ""
+    if (href.length > 0) {
+      const innerIcon = Math.max(6, Math.round(radius * 1.25))
+      parts.push(
+        `<image x="${cx - innerIcon / 2}" y="${cy - innerIcon / 2}" width="${innerIcon}" height="${innerIcon}" href="${escapeXmlText(href)}" preserveAspectRatio="xMidYMid meet" />`
+      )
+    }
+
+    parts.push(
+      `<circle cx="${cx}" cy="${cy}" r="${radius}" fill="none" stroke="${fg}" stroke-width="${strokeW}" opacity="${BARS_TRACK_OPACITY}" shape-rendering="geometricPrecision" />`
+    )
+
+    const fraction = barsForStyle[0]?.fraction
+    if (typeof fraction === "number" && Number.isFinite(fraction) && fraction >= 0) {
+      const clamped = Math.max(0, Math.min(1, fraction))
+      if (clamped > 0) {
+        const circumference = 2 * Math.PI * radius
+        const dash = circumference * clamped
+        parts.push(
+          `<circle cx="${cx}" cy="${cy}" r="${radius}" fill="none" stroke="${fg}" stroke-width="${strokeW}" stroke-linecap="butt" stroke-dasharray="${dash} ${circumference}" transform="rotate(-90 ${cx} ${cy})" opacity="${BARS_FILL_OPACITY}" shape-rendering="geometricPrecision" />`
+        )
+      }
     }
   } else if (style === "donut") {
     const iconSize = Math.max(6, Math.round(sizePx - 2 * layout.pad * 0.5))
@@ -451,9 +506,18 @@ export async function renderTrayBarsIcon(args: {
   percentText?: string
   providerIconUrl?: string
   foregroundColor?: string
+  square?: boolean
 }): Promise<Image> {
-  const { bars, sizePx, style = "provider", percentText, providerIconUrl, foregroundColor } = args
-  const text = style === "bars" ? undefined : normalizePercentText(percentText)
+  const {
+    bars,
+    sizePx,
+    style = "provider",
+    percentText,
+    providerIconUrl,
+    foregroundColor,
+    square = false,
+  } = args
+  const text = square || style === "bars" ? undefined : normalizePercentText(percentText)
   const svg = makeTrayBarsSvg({
     bars,
     sizePx,
@@ -461,13 +525,18 @@ export async function renderTrayBarsIcon(args: {
     percentText: text,
     providerIconUrl,
     foregroundColor,
+    square,
   })
   const layout = getSvgLayout({
     sizePx,
     style,
     percentText: text,
+    square,
   })
-  const canvasWidth = Math.max(layout.width, getStableTrayImageWidthPx(sizePx))
+  // On macOS we pad every icon to a stable width so the menu-bar item doesn't jitter as
+  // the percentage changes. A square (Linux) slot must not be padded — that is exactly
+  // what makes the icon look tiny — so we keep the natural square width.
+  const canvasWidth = square ? layout.width : Math.max(layout.width, getStableTrayImageWidthPx(sizePx))
   const rgba = await rasterizeSvgToRgba({
     svg,
     svgWidthPx: layout.width,

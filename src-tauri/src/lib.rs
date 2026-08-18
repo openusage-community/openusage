@@ -16,6 +16,8 @@ mod panel_windows;
 #[cfg(any(target_os = "linux", target_os = "windows"))]
 mod popover_platform;
 mod tray;
+#[cfg(target_os = "linux")]
+mod wayland_global_shortcut;
 #[cfg(target_os = "macos")]
 mod webkit_config;
 
@@ -478,6 +480,15 @@ fn update_global_shortcut(
             Some(trimmed)
         }
     });
+
+    // On Wayland, X11 key grabs never fire; register through the XDG GlobalShortcuts
+    // portal instead
+    #[cfg(target_os = "linux")]
+    if wayland_global_shortcut::is_wayland() {
+        wayland_global_shortcut::configure(&app_handle, normalized_shortcut);
+        return Ok(());
+    }
+
     let mut managed_shortcut = managed_shortcut_slot()
         .lock()
         .map_err(|e| format!("failed to lock managed shortcut state: {}", e))?;
@@ -686,28 +697,40 @@ pub fn run() {
             {
                 use tauri_plugin_store::StoreExt;
 
-                if let Ok(store) = app.handle().store("settings.json") {
-                    if let Some(shortcut_value) = store.get(GLOBAL_SHORTCUT_STORE_KEY) {
-                        if let Some(shortcut) = shortcut_value.as_str() {
-                            let shortcut = shortcut.trim();
-                            if !shortcut.is_empty() {
-                                let handle = app.handle().clone();
-                                log::info!("Registering initial global shortcut: {}", shortcut);
-                                if let Err(e) = handle.global_shortcut().on_shortcut(
-                                    shortcut,
-                                    |app, _shortcut, event| {
-                                        handle_global_shortcut(app, event);
-                                    },
-                                ) {
-                                    log::warn!("Failed to register initial global shortcut: {}", e);
-                                } else if let Ok(mut managed_shortcut) =
-                                    managed_shortcut_slot().lock()
-                                {
-                                    *managed_shortcut = Some(shortcut.to_string());
-                                } else {
-                                    log::warn!("Failed to store managed shortcut in memory");
-                                }
-                            }
+                let stored_shortcut = app
+                    .handle()
+                    .store("settings.json")
+                    .ok()
+                    .and_then(|store| store.get(GLOBAL_SHORTCUT_STORE_KEY))
+                    .and_then(|value| value.as_str().map(|s| s.trim().to_string()))
+                    .filter(|s| !s.is_empty());
+
+                // On Wayland, register through the XDG portal (X11 grabs don't fire).
+                #[cfg(target_os = "linux")]
+                let handled_by_portal = if wayland_global_shortcut::is_wayland() {
+                    log::info!("Registering global shortcut via Wayland portal");
+                    wayland_global_shortcut::configure(app.handle(), stored_shortcut.clone());
+                    true
+                } else {
+                    false
+                };
+                #[cfg(not(target_os = "linux"))]
+                let handled_by_portal = false;
+
+                if !handled_by_portal {
+                    if let Some(shortcut) = stored_shortcut {
+                        log::info!("Registering initial global shortcut: {}", shortcut);
+                        if let Err(e) = app.handle().global_shortcut().on_shortcut(
+                            shortcut.as_str(),
+                            |app, _shortcut, event| {
+                                handle_global_shortcut(app, event);
+                            },
+                        ) {
+                            log::warn!("Failed to register initial global shortcut: {}", e);
+                        } else if let Ok(mut managed_shortcut) = managed_shortcut_slot().lock() {
+                            *managed_shortcut = Some(shortcut);
+                        } else {
+                            log::warn!("Failed to store managed shortcut in memory");
                         }
                     }
                 }

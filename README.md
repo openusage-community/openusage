@@ -4,7 +4,7 @@
 
 # OpenUsage Community
 
- _Track all your AI coding subscriptions in one place_
+_Track all your AI coding subscriptions in one place_
 
 </div>
 
@@ -130,7 +130,19 @@ chmod +x OpenUsage.AppImage
 ./OpenUsage.AppImage
 ```
 
-After installing via `.rpm` or `.deb`, launch **OpenUsage Community** from your app menu. The app starts in the system tray.
+### Arch (and other Arch-based rolling-release distros)
+
+On rolling-release distros with a very recent Mesa, the portable AppImage may fail to open its window with `Could not create default EGL display: EGL_BAD_PARAMETER`. The AppImage bundles an older GTK/WebKit/GL stack that no longer matches a bleeding-edge host GPU driver. Build a native package instead — it links against your system's own `webkit2gtk-4.1` and Mesa, so it always matches:
+
+```sh
+git clone https://github.com/openusage-community/openusage.git
+cd openusage/packaging
+makepkg -si
+```
+
+This builds and installs the `openusage` package; launch **OpenUsage** from your app menu.
+
+After installing via `.rpm`, `.deb` or `PKGBUILD`, launch **OpenUsage Community** from your app menu. The app starts in the system tray.
 
 If your desktop environment has no tray support, install an AppIndicator or StatusNotifier extension, or open the panel with the global shortcut.
 

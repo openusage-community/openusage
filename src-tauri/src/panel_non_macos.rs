@@ -14,8 +14,6 @@ use crate::panel::{
 
 const CLICK_CATCHER_LABEL: &str = "panel-click-catcher";
 const CLICK_CATCHER_URL: &str = "index.html?overlay=panel-click-catcher";
-#[cfg(target_os = "linux")]
-static LINUX_FOCUS_HANDLER_INSTALLED: AtomicBool = AtomicBool::new(false);
 static PANEL_IS_OPEN: AtomicBool = AtomicBool::new(false);
 
 #[derive(Clone, Copy)]
@@ -33,6 +31,9 @@ fn register_panel_opened() {
 fn register_panel_closed() {
     PANEL_IS_OPEN.store(false, Ordering::SeqCst);
 }
+
+#[cfg(target_os = "linux")]
+static LINUX_FOCUS_HANDLER_INSTALLED: AtomicBool = AtomicBool::new(false);
 
 fn should_hide_for_focus_loss(is_visible: bool, is_open: bool) -> bool {
     is_visible && is_open
@@ -126,6 +127,14 @@ fn get_or_create_click_catcher(app_handle: &AppHandle) -> Option<tauri::WebviewW
     }
 }
 
+#[cfg(target_os = "linux")]
+fn should_show_click_catcher() -> bool {
+    // The always-on-top click-catcher can stack above the panel on some compositors
+    // (KDE/XWayland) and intercept panel clicks; dismiss via focus loss instead.
+    false
+}
+
+#[cfg(not(target_os = "linux"))]
 fn should_show_click_catcher() -> bool {
     true
 }
@@ -199,9 +208,12 @@ pub(crate) fn apply_panel_position(
 
 /// No NSPanel on non-macOS; the regular window is configured via tauri.conf.json.
 pub fn init(app_handle: &AppHandle) -> tauri::Result<()> {
+    // Dismiss on focus loss instead of the click-catcher (see should_show_click_catcher):
+    // clicks inside the panel keep the toplevel focused, so interaction doesn't dismiss it.
     #[cfg(target_os = "linux")]
     init_linux_focus_loss_handler(app_handle)?;
-
+    #[cfg(not(target_os = "linux"))]
+    let _ = app_handle;
     Ok(())
 }
 
@@ -342,8 +354,8 @@ mod tests {
 
     #[cfg(target_os = "linux")]
     #[test]
-    fn linux_uses_click_catcher_overlay() {
-        assert!(should_show_click_catcher());
+    fn linux_dismisses_via_focus_loss_not_click_catcher() {
+        assert!(!should_show_click_catcher());
     }
 
     #[test]

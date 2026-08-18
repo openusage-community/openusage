@@ -1,7 +1,10 @@
 const PANEL_WINDOW_ARROW_TIP_TOP_OFFSET_PX: f64 = 6.0;
 #[cfg(test)]
 const PANEL_ARROW_HEIGHT_PX: f64 = 7.0;
-const FALLBACK_ANCHOR_RIGHT_INSET_PX: f64 = 48.0;
+// Fallback anchor margins for when the tray icon rect is unknown (Linux SNI, Windows).
+const FALLBACK_RIGHT_MARGIN_PX: f64 = 8.0;
+const FALLBACK_BOTTOM_MARGIN_PX: f64 = 56.0;
+#[cfg(test)]
 const FALLBACK_TOP_PANEL_BOTTOM_Y_PX: f64 = 32.0;
 
 #[derive(Debug, Clone, Copy)]
@@ -48,10 +51,20 @@ pub(crate) fn compute_anchor_position(
     }
 }
 
-pub(crate) fn fallback_anchor_for_monitor(monitor: &LogicalMonitorBounds) -> LogicalAnchor {
-    LogicalAnchor {
-        center_x: monitor.x + monitor.width - FALLBACK_ANCHOR_RIGHT_INSET_PX,
-        bottom_y: monitor.y + FALLBACK_TOP_PANEL_BOTTOM_Y_PX,
+/// Panel position when the tray icon rect is unavailable (Linux SNI, Windows):
+/// bottom-right, above the taskbar.
+pub(crate) fn bottom_right_fallback_position(
+    monitor: &LogicalMonitorBounds,
+    panel_width: f64,
+    panel_height: f64,
+) -> PanelAnchorPosition {
+    let x = (monitor.x + monitor.width - panel_width - FALLBACK_RIGHT_MARGIN_PX).max(monitor.x);
+    let y =
+        (monitor.y + monitor.height - panel_height - FALLBACK_BOTTOM_MARGIN_PX).max(monitor.y);
+    PanelAnchorPosition {
+        x,
+        y,
+        arrow_offset_px: 0.0,
     }
 }
 
@@ -111,7 +124,7 @@ mod tests {
     }
 
     #[test]
-    fn fallback_anchor_places_panel_near_top_right() {
+    fn bottom_right_fallback_places_panel_above_taskbar() {
         let monitor = LogicalMonitorBounds {
             x: 0.0,
             y: 0.0,
@@ -119,12 +132,28 @@ mod tests {
             height: 1080.0,
         };
 
-        let anchor = fallback_anchor_for_monitor(&monitor);
-        let result = compute_anchor_position(&monitor, anchor, 400.0, 500.0);
+        let result = bottom_right_fallback_position(&monitor, 400.0, 500.0);
 
-        assert_eq!(result.x, 1520.0);
-        assert_eq!(result.y, 26.0);
-        assert_eq!(result.arrow_offset_px, 152.0);
+        // right:  1920 - 400 - 8  = 1512
+        // bottom: 1080 - 500 - 56 = 524
+        assert_eq!(result.x, 1512.0);
+        assert_eq!(result.y, 524.0);
+        assert_eq!(result.arrow_offset_px, 0.0);
+    }
+
+    #[test]
+    fn bottom_right_fallback_clamps_into_small_monitor() {
+        let monitor = LogicalMonitorBounds {
+            x: 0.0,
+            y: 0.0,
+            width: 300.0,
+            height: 300.0,
+        };
+
+        let result = bottom_right_fallback_position(&monitor, 400.0, 500.0);
+
+        assert_eq!(result.x, 0.0);
+        assert_eq!(result.y, 0.0);
     }
 
     #[test]

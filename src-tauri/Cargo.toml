@@ -42,6 +42,8 @@ rust_xlsxwriter = "0.95.0"
 tauri-plugin-dialog = "2.7.1"
 
 [target.'cfg(target_os = "linux")'.dependencies]
+ashpd = { version = "0.13", default-features = false, features = ["tokio", "global_shortcuts"] }
+futures-util = { version = "0.3", default-features = false, features = ["std"] }
 gtk = "0.18"
 
 [target.'cfg(target_os = "windows")'.dependencies]
