@@ -84,6 +84,7 @@ export default class OpenUsageAnchorExtension extends Extension {
 
         const body = JSON.stringify({
             centerX: x + width / 2,
+            topY: y,
             bottomY: y + height,
         });
         const request = [

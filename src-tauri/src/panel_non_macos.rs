@@ -1,9 +1,6 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use tauri::{
-    AppHandle, LogicalPosition, LogicalSize, Manager, PhysicalPosition, Position, Size, WebviewUrl,
-    WebviewWindowBuilder,
-};
+use tauri::{AppHandle, Manager, PhysicalPosition, Position, Size};
 
 #[cfg(target_os = "linux")]
 use gtk::prelude::*;
@@ -12,19 +9,9 @@ use crate::panel::{
     position_panel_at_logical_anchor, position_panel_at_tray_click, position_panel_from_tray,
 };
 
-const CLICK_CATCHER_LABEL: &str = "panel-click-catcher";
-const CLICK_CATCHER_URL: &str = "index.html?overlay=panel-click-catcher";
 #[cfg(target_os = "linux")]
 static LINUX_FOCUS_HANDLER_INSTALLED: AtomicBool = AtomicBool::new(false);
 static PANEL_IS_OPEN: AtomicBool = AtomicBool::new(false);
-
-#[derive(Clone, Copy)]
-struct LogicalOverlayBounds {
-    x: f64,
-    y: f64,
-    width: f64,
-    height: f64,
-}
 
 fn register_panel_opened() {
     PANEL_IS_OPEN.store(true, Ordering::SeqCst);
@@ -52,112 +39,6 @@ fn present_gtk_window(window: &tauri::WebviewWindow) {
 #[cfg(not(target_os = "linux"))]
 fn present_gtk_window(_window: &tauri::WebviewWindow) {}
 
-fn monitor_logical_bounds(monitor: &tauri::Monitor) -> LogicalOverlayBounds {
-    let scale = monitor.scale_factor();
-    LogicalOverlayBounds {
-        x: monitor.position().x as f64 / scale,
-        y: monitor.position().y as f64 / scale,
-        width: monitor.size().width as f64 / scale,
-        height: monitor.size().height as f64 / scale,
-    }
-}
-
-fn merge_overlay_bounds(
-    current: Option<LogicalOverlayBounds>,
-    next: LogicalOverlayBounds,
-) -> LogicalOverlayBounds {
-    match current {
-        Some(current) => {
-            let min_x = current.x.min(next.x);
-            let min_y = current.y.min(next.y);
-            let max_x = (current.x + current.width).max(next.x + next.width);
-            let max_y = (current.y + current.height).max(next.y + next.height);
-            LogicalOverlayBounds {
-                x: min_x,
-                y: min_y,
-                width: max_x - min_x,
-                height: max_y - min_y,
-            }
-        }
-        None => next,
-    }
-}
-
-fn click_catcher_bounds(window: &tauri::WebviewWindow) -> Option<LogicalOverlayBounds> {
-    let monitors = window.available_monitors().ok()?;
-    let mut bounds = None;
-    for monitor in &monitors {
-        bounds = Some(merge_overlay_bounds(
-            bounds,
-            monitor_logical_bounds(monitor),
-        ));
-    }
-    bounds
-}
-
-fn get_or_create_click_catcher(app_handle: &AppHandle) -> Option<tauri::WebviewWindow> {
-    if let Some(window) = app_handle.get_webview_window(CLICK_CATCHER_LABEL) {
-        return Some(window);
-    }
-
-    match WebviewWindowBuilder::new(
-        app_handle,
-        CLICK_CATCHER_LABEL,
-        WebviewUrl::App(CLICK_CATCHER_URL.into()),
-    )
-    .title("")
-    .decorations(false)
-    .transparent(true)
-    .resizable(false)
-    .skip_taskbar(true)
-    .always_on_top(true)
-    .visible(false)
-    .focused(false)
-    .focusable(false)
-    .shadow(false)
-    .inner_size(1.0, 1.0)
-    .build()
-    {
-        Ok(window) => Some(window),
-        Err(error) => {
-            log::warn!("click catcher: failed to create overlay window: {error}");
-            None
-        }
-    }
-}
-
-fn should_show_click_catcher() -> bool {
-    true
-}
-
-fn show_click_catcher(app_handle: &AppHandle) {
-    if !should_show_click_catcher() {
-        return;
-    }
-
-    let Some(main_window) = app_handle.get_webview_window("main") else {
-        return;
-    };
-    let Some(click_catcher) = get_or_create_click_catcher(app_handle) else {
-        return;
-    };
-
-    if let Some(bounds) = click_catcher_bounds(&main_window) {
-        let _ = click_catcher.set_position(LogicalPosition::new(bounds.x, bounds.y));
-        let _ = click_catcher.set_size(LogicalSize::new(bounds.width, bounds.height));
-    }
-
-    let _ = click_catcher.set_always_on_top(true);
-    let _ = click_catcher.set_focusable(false);
-    let _ = click_catcher.show();
-}
-
-fn hide_click_catcher(app_handle: &AppHandle) {
-    if let Some(window) = app_handle.get_webview_window(CLICK_CATCHER_LABEL) {
-        let _ = window.hide();
-    }
-}
-
 pub(crate) fn apply_panel_position(
     app_handle: &AppHandle,
     panel_x: f64,
@@ -172,28 +53,11 @@ pub(crate) fn apply_panel_position(
         panel_x,
         panel_y
     );
-    eprintln!(
-        "apply_panel_position requested logical=({:.0},{:.0})",
-        panel_x, panel_y
-    );
     if let Err(e) = window.set_position(tauri::LogicalPosition::new(panel_x, panel_y)) {
         log::warn!(
             "apply_panel_position: set_position failed (best-effort): {}",
             e
         );
-        eprintln!("apply_panel_position set_position failed: {e}");
-        return;
-    }
-    match window.outer_position() {
-        Ok(position) => {
-            eprintln!(
-                "apply_panel_position actual outer physical=({},{})",
-                position.x, position.y
-            );
-        }
-        Err(error) => {
-            eprintln!("apply_panel_position actual outer position unavailable: {error}");
-        }
     }
 }
 
@@ -240,7 +104,6 @@ pub fn show_panel(app_handle: &AppHandle) {
         return;
     };
     if window.is_visible().unwrap_or(false) {
-        show_click_catcher(app_handle);
         let _ = window.set_always_on_top(true);
         let _ = window.set_focus();
         present_gtk_window(&window);
@@ -248,7 +111,6 @@ pub fn show_panel(app_handle: &AppHandle) {
         return;
     }
 
-    show_click_catcher(app_handle);
     let _ = window.set_always_on_top(true);
     position_panel_from_tray(app_handle);
     let _ = window.show();
@@ -267,7 +129,6 @@ fn show_panel_at_tray_icon(
     let Some(window) = app_handle.get_webview_window("main") else {
         return;
     };
-    show_click_catcher(app_handle);
     let _ = window.set_always_on_top(true);
     position_panel_at_tray_click(app_handle, click_position, icon_position, icon_size);
     let _ = window.show();
@@ -277,15 +138,19 @@ fn show_panel_at_tray_icon(
     register_panel_opened();
 }
 
-pub fn show_panel_at_logical_anchor(app_handle: &AppHandle, center_x: f64, bottom_y: f64) {
+pub fn show_panel_at_logical_anchor(
+    app_handle: &AppHandle,
+    center_x: f64,
+    top_y: f64,
+    bottom_y: f64,
+) {
     let Some(window) = app_handle.get_webview_window("main") else {
         return;
     };
-    show_click_catcher(app_handle);
     let _ = window.set_always_on_top(true);
-    position_panel_at_logical_anchor(app_handle, center_x, bottom_y);
+    position_panel_at_logical_anchor(app_handle, center_x, top_y, bottom_y);
     let _ = window.show();
-    position_panel_at_logical_anchor(app_handle, center_x, bottom_y);
+    position_panel_at_logical_anchor(app_handle, center_x, top_y, bottom_y);
     let _ = window.set_focus();
     present_gtk_window(&window);
     register_panel_opened();
@@ -325,7 +190,6 @@ pub fn toggle_panel_at_tray_icon(
 
 pub fn hide_panel(app_handle: &AppHandle) {
     register_panel_closed();
-    hide_click_catcher(app_handle);
     if let Some(window) = app_handle.get_webview_window("main") {
         let _ = window.hide();
     }
@@ -338,12 +202,6 @@ mod tests {
 
     fn reset_panel_state_for_test() {
         PANEL_IS_OPEN.store(false, Ordering::SeqCst);
-    }
-
-    #[cfg(target_os = "linux")]
-    #[test]
-    fn linux_uses_click_catcher_overlay() {
-        assert!(should_show_click_catcher());
     }
 
     #[test]
