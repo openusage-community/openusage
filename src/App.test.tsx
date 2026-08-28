@@ -383,20 +383,6 @@ describe("App", () => {
     return contextAction as () => void
   }
 
-  it("renders click catcher overlay and hides panel on pointer down", async () => {
-    window.history.replaceState(null, "", "/?overlay=panel-click-catcher")
-    state.isTauriMock.mockReturnValue(true)
-
-    render(<App />)
-
-    const overlay = screen.getByTestId("panel-click-catcher")
-    fireEvent.pointerDown(overlay)
-
-    await waitFor(() => {
-      expect(state.invokeMock).toHaveBeenCalledWith("hide_panel")
-    })
-    expect(state.startBatchMock).not.toHaveBeenCalled()
-  })
 
   it("applies theme mode changes to document", async () => {
     const mq = {

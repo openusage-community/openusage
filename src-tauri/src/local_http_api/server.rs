@@ -189,11 +189,23 @@ struct PanelOpenRequest {
     center_x: f64,
     #[serde(rename = "bottomY")]
     bottom_y: f64,
+    /// Optional icon top edge; defaults to bottomY for senders that don't provide it.
+    #[serde(rename = "topY")]
+    top_y: Option<f64>,
+}
+
+impl PanelOpenRequest {
+    fn top_y(&self) -> f64 {
+        self.top_y.unwrap_or(self.bottom_y)
+    }
 }
 
 fn parse_panel_open_request(body: &str) -> Result<PanelOpenRequest, &'static str> {
     let request: PanelOpenRequest = serde_json::from_str(body).map_err(|_| "invalid_anchor")?;
-    if !request.center_x.is_finite() || !request.bottom_y.is_finite() {
+    if !request.center_x.is_finite()
+        || !request.bottom_y.is_finite()
+        || !request.top_y().is_finite()
+    {
         return Err("invalid_anchor");
     }
     Ok(request)
@@ -216,11 +228,12 @@ fn handle_post_linux_panel_open(body: &str, app_handle: Option<&AppHandle>) -> S
         request.center_x,
         request.bottom_y
     );
-    eprintln!(
-        "linux panel open anchor center_x={:.0} bottom_y={:.0}",
-        request.center_x, request.bottom_y
+    crate::panel::show_panel_at_logical_anchor(
+        app_handle,
+        request.center_x,
+        request.top_y(),
+        request.bottom_y,
     );
-    crate::panel::show_panel_at_logical_anchor(app_handle, request.center_x, request.bottom_y);
     response_no_content()
 }
 
@@ -231,11 +244,7 @@ fn handle_post_linux_panel_anchor(body: &str) -> String {
         Err(error_code) => return response_bad_request(error_code),
     };
 
-    eprintln!(
-        "linux panel remember anchor center_x={:.0} bottom_y={:.0}",
-        request.center_x, request.bottom_y
-    );
-    crate::panel::remember_linux_panel_anchor(request.center_x, request.bottom_y);
+    crate::panel::remember_linux_panel_anchor(request.center_x, request.top_y(), request.bottom_y);
     response_no_content()
 }
 

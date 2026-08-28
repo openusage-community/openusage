@@ -75,7 +75,7 @@ describe("usePanel", () => {
     )
 
     await waitFor(() => {
-      expect(listenMock).toHaveBeenCalledTimes(3)
+      expect(listenMock).toHaveBeenCalledTimes(4)
     })
 
     act(() => {
@@ -181,6 +181,12 @@ describe("usePanel", () => {
     })
 
     expect(result.current.arrowOffsetPx).toBe(72)
+
+    expect(result.current.anchorEdge).toBe("top")
+    act(() => {
+      callbacks.get("panel:anchor-edge")?.({ payload: "bottom" })
+    })
+    expect(result.current.anchorEdge).toBe("bottom")
   })
 
   it("switches views with Cmd+Arrow navigation", () => {

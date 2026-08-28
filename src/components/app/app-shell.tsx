@@ -56,6 +56,7 @@ export function AppShell({
     canScrollDown,
     maxPanelHeightPx,
     arrowOffsetPx,
+    anchorEdge,
   } = usePanel({
     activeView,
     setActiveView,
@@ -71,9 +72,12 @@ export function AppShell({
     <div
       ref={containerRef}
       tabIndex={-1}
-      className="flex flex-col items-center p-6 pt-1.5 bg-transparent outline-none"
+      className={`flex flex-col items-center p-6 bg-transparent outline-none ${anchorEdge === "bottom" ? "pb-1.5" : "pt-1.5"}`}
     >
-      <div className="tray-arrow" style={{ transform: `translateX(${arrowOffsetPx}px)` }} />
+      <div
+        className={anchorEdge === "bottom" ? "tray-arrow tray-arrow-bottom" : "tray-arrow"}
+        style={{ transform: `translateX(${arrowOffsetPx}px)` }}
+      />
       <div
         className="relative bg-card rounded-xl overflow-hidden select-none w-full border shadow-lg flex flex-col"
         style={maxPanelHeightPx ? { maxHeight: `${maxPanelHeightPx - ARROW_OVERHEAD_PX}px` } : undefined}

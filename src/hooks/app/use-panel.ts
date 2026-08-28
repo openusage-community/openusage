@@ -44,6 +44,7 @@ export function usePanel({
   const [canScrollDown, setCanScrollDown] = useState(false)
   const [maxPanelHeightPx, setMaxPanelHeightPx] = useState<number | null>(null)
   const [arrowOffsetPx, setArrowOffsetPx] = useState(0)
+  const [anchorEdge, setAnchorEdge] = useState<"top" | "bottom">("top")
   const maxPanelHeightPxRef = useRef<number | null>(null)
   const focusContainer = useCallback(() => {
     window.requestAnimationFrame(() => {
@@ -120,6 +121,15 @@ export function usePanel({
         return
       }
       unlisteners.push(u3)
+
+      const u4 = await listen<string>("panel:anchor-edge", (event) => {
+        setAnchorEdge(event.payload === "bottom" ? "bottom" : "top")
+      })
+      if (cancelled) {
+        u4()
+        return
+      }
+      unlisteners.push(u4)
     }
 
     void setup()
@@ -258,5 +268,6 @@ export function usePanel({
     canScrollDown,
     maxPanelHeightPx,
     arrowOffsetPx,
+    anchorEdge,
   }
 }

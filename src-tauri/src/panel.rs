@@ -8,11 +8,12 @@ use tauri_nspanel::{
 };
 
 use crate::panel_geometry::{
-    LogicalAnchor, LogicalMonitorBounds, PanelAnchorPosition, compute_anchor_position,
+    AnchorEdge, LogicalAnchor, LogicalMonitorBounds, PanelAnchorPosition, compute_anchor_position,
     fallback_anchor_for_monitor,
 };
 
 const PANEL_ANCHOR_OFFSET_EVENT: &str = "panel:anchor-offset";
+const PANEL_ANCHOR_EDGE_EVENT: &str = "panel:anchor-edge";
 static LINUX_PANEL_ANCHOR: OnceLock<Mutex<Option<LogicalAnchor>>> = OnceLock::new();
 
 #[cfg(target_os = "linux")]
@@ -21,15 +22,19 @@ fn linux_panel_anchor_state() -> &'static Mutex<Option<LogicalAnchor>> {
 }
 
 #[cfg(target_os = "linux")]
-pub(crate) fn remember_linux_panel_anchor(center_x: f64, bottom_y: f64) {
-    if !center_x.is_finite() || !bottom_y.is_finite() {
+pub(crate) fn remember_linux_panel_anchor(center_x: f64, top_y: f64, bottom_y: f64) {
+    if !center_x.is_finite() || !top_y.is_finite() || !bottom_y.is_finite() {
         return;
     }
 
     let mut anchor = linux_panel_anchor_state()
         .lock()
         .expect("linux panel anchor state poisoned");
-    *anchor = Some(LogicalAnchor { center_x, bottom_y });
+    *anchor = Some(LogicalAnchor {
+        center_x,
+        top_y,
+        bottom_y,
+    });
 }
 
 #[cfg(target_os = "linux")]
@@ -100,9 +105,16 @@ fn monitor_containing_logical_point<'a>(
         .find(|monitor| monitor_contains_logical_point(monitor, point_x, point_y))
 }
 
-fn emit_panel_anchor_offset(app_handle: &AppHandle, arrow_offset_px: f64) {
-    if let Err(error) = app_handle.emit(PANEL_ANCHOR_OFFSET_EVENT, arrow_offset_px) {
-        log::debug!("emit_panel_anchor_offset: failed: {}", error);
+fn emit_panel_anchor(app_handle: &AppHandle, position: &PanelAnchorPosition) {
+    if let Err(error) = app_handle.emit(PANEL_ANCHOR_OFFSET_EVENT, position.arrow_offset_px) {
+        log::debug!("emit_panel_anchor: offset emit failed: {}", error);
+    }
+    let edge = match position.edge {
+        AnchorEdge::Top => "top",
+        AnchorEdge::Bottom => "bottom",
+    };
+    if let Err(error) = app_handle.emit(PANEL_ANCHOR_EDGE_EVENT, edge) {
+        log::debug!("emit_panel_anchor: edge emit failed: {}", error);
     }
 }
 
@@ -202,6 +214,7 @@ fn compute_panel_position(
 
     let anchor = LogicalAnchor {
         center_x: anchor_logical_x,
+        top_y: icon_logical_y,
         bottom_y: icon_logical_y + icon_logical_h,
     };
     let position = compute_anchor_position(&monitor_bounds, anchor, panel_width, panel_height);
@@ -293,6 +306,7 @@ fn compute_remembered_panel_position(_app_handle: &AppHandle) -> Option<PanelAnc
 fn compute_logical_anchor_panel_position(
     app_handle: &AppHandle,
     center_x: f64,
+    top_y: f64,
     bottom_y: f64,
 ) -> Option<PanelAnchorPosition> {
     let window = app_handle.get_webview_window("main")?;
@@ -302,7 +316,11 @@ fn compute_logical_anchor_panel_position(
         .or_else(|| window.primary_monitor().ok().flatten())?;
     let monitor_bounds = logical_bounds_from_monitor(&monitor);
     let (panel_width, panel_height) = panel_size_from_window_or_config(&window);
-    let anchor = LogicalAnchor { center_x, bottom_y };
+    let anchor = LogicalAnchor {
+        center_x,
+        top_y,
+        bottom_y,
+    };
     let position = compute_anchor_position(&monitor_bounds, anchor, panel_width, panel_height);
 
     log::debug!(
@@ -369,7 +387,7 @@ pub fn position_panel_at_tray_icon(
         return;
     };
     apply_panel_position(app_handle, position.x, position.y, primary_logical_h);
-    emit_panel_anchor_offset(app_handle, position.arrow_offset_px);
+    emit_panel_anchor(app_handle, &position);
 }
 
 pub fn position_panel_at_tray_click(
@@ -384,36 +402,93 @@ pub fn position_panel_at_tray_click(
         return;
     };
     apply_panel_position(app_handle, position.x, position.y, primary_logical_h);
-    emit_panel_anchor_offset(app_handle, position.arrow_offset_px);
+    emit_panel_anchor(app_handle, &position);
+}
+
+/// Cursor anchor is only trusted when the pointer sits near the top or bottom
+/// screen edge — that's where trays live. This keeps the global shortcut
+/// (cursor anywhere) from popping the panel mid-screen.
+#[cfg(any(target_os = "linux", test))]
+const CURSOR_ANCHOR_EDGE_ZONE_PX: f64 = 96.0;
+
+#[cfg(any(target_os = "linux", test))]
+fn cursor_edge_anchor(
+    monitor_bounds: &LogicalMonitorBounds,
+    x: f64,
+    y: f64,
+) -> Option<LogicalAnchor> {
+    let near_top = y <= monitor_bounds.y + CURSOR_ANCHOR_EDGE_ZONE_PX;
+    let near_bottom = y >= monitor_bounds.y + monitor_bounds.height - CURSOR_ANCHOR_EDGE_ZONE_PX;
+    if near_top || near_bottom {
+        Some(LogicalAnchor::at_point(x, y))
+    } else {
+        None
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn compute_cursor_edge_panel_position(app_handle: &AppHandle) -> Option<PanelAnchorPosition> {
+    let window = app_handle.get_webview_window("main")?;
+    let cursor = app_handle.cursor_position().ok()?;
+    let monitors = window.available_monitors().ok()?;
+    let monitor = monitor_containing_physical_point(&monitors, cursor.x, cursor.y)?;
+    let monitor_bounds = logical_bounds_from_monitor(monitor);
+    let scale = monitor.scale_factor();
+    let cursor_x = monitor_bounds.x + (cursor.x - monitor.position().x as f64) / scale;
+    let cursor_y = monitor_bounds.y + (cursor.y - monitor.position().y as f64) / scale;
+    let anchor = cursor_edge_anchor(&monitor_bounds, cursor_x, cursor_y)?;
+    let (panel_width, panel_height) = panel_size_from_window_or_config(&window);
+    let position = compute_anchor_position(&monitor_bounds, anchor, panel_width, panel_height);
+    log::debug!(
+        "compute_cursor_edge_panel_position: cursor=({:.0},{:.0}) panel=({:.0},{:.0})",
+        cursor_x,
+        cursor_y,
+        position.x,
+        position.y
+    );
+    Some(position)
+}
+
+#[cfg(all(not(target_os = "macos"), not(target_os = "linux")))]
+fn compute_cursor_edge_panel_position(_app_handle: &AppHandle) -> Option<PanelAnchorPosition> {
+    None
 }
 
 #[cfg(not(target_os = "macos"))]
 fn choose_fallback_panel_position(
     remembered: Option<PanelAnchorPosition>,
+    cursor_edge: Option<PanelAnchorPosition>,
     safe_fallback: Option<PanelAnchorPosition>,
 ) -> Option<PanelAnchorPosition> {
-    remembered.or(safe_fallback)
+    remembered.or(cursor_edge).or(safe_fallback)
 }
 
 #[cfg(not(target_os = "macos"))]
 fn position_panel_at_fallback_anchor(app_handle: &AppHandle) {
     let Some(position) = choose_fallback_panel_position(
         compute_remembered_panel_position(app_handle),
+        compute_cursor_edge_panel_position(app_handle),
         compute_fallback_panel_position(app_handle),
     ) else {
         return;
     };
     apply_panel_position(app_handle, position.x, position.y, 0.0);
-    emit_panel_anchor_offset(app_handle, position.arrow_offset_px);
+    emit_panel_anchor(app_handle, &position);
 }
 
-pub fn position_panel_at_logical_anchor(app_handle: &AppHandle, center_x: f64, bottom_y: f64) {
-    let Some(position) = compute_logical_anchor_panel_position(app_handle, center_x, bottom_y)
+pub fn position_panel_at_logical_anchor(
+    app_handle: &AppHandle,
+    center_x: f64,
+    top_y: f64,
+    bottom_y: f64,
+) {
+    let Some(position) =
+        compute_logical_anchor_panel_position(app_handle, center_x, top_y, bottom_y)
     else {
         return;
     };
     apply_panel_position(app_handle, position.x, position.y, 0.0);
-    emit_panel_anchor_offset(app_handle, position.arrow_offset_px);
+    emit_panel_anchor(app_handle, &position);
 }
 
 #[cfg(test)]
@@ -440,24 +515,49 @@ mod tests {
     }
 
     #[test]
-    fn fallback_position_does_not_use_cursor_anchor() {
-        let remembered = PanelAnchorPosition {
-            x: 10.0,
-            y: 20.0,
+    fn fallback_prefers_remembered_then_cursor_edge_then_safe() {
+        let position = |x: f64| PanelAnchorPosition {
+            x,
+            y: 0.0,
             arrow_offset_px: 0.0,
+            edge: AnchorEdge::Top,
         };
-        let safe = PanelAnchorPosition {
-            x: 30.0,
-            y: 40.0,
-            arrow_offset_px: 0.0,
+        let remembered = position(10.0);
+        let cursor = position(20.0);
+        let safe = position(30.0);
+
+        assert_eq!(
+            choose_fallback_panel_position(None, None, Some(safe))
+                .unwrap()
+                .x,
+            30.0
+        );
+        assert_eq!(
+            choose_fallback_panel_position(None, Some(cursor), Some(safe))
+                .unwrap()
+                .x,
+            20.0
+        );
+        assert_eq!(
+            choose_fallback_panel_position(Some(remembered), Some(cursor), Some(safe))
+                .unwrap()
+                .x,
+            10.0
+        );
+    }
+
+    #[test]
+    fn cursor_anchor_only_near_screen_edges() {
+        let bounds = LogicalMonitorBounds {
+            x: 0.0,
+            y: 0.0,
+            width: 1920.0,
+            height: 1080.0,
         };
 
-        let chosen = choose_fallback_panel_position(None, Some(safe)).expect("safe fallback");
-        assert_eq!(chosen.x, 30.0);
-
-        let chosen =
-            choose_fallback_panel_position(Some(remembered), Some(safe)).expect("remembered");
-        assert_eq!(chosen.x, 10.0);
+        assert!(cursor_edge_anchor(&bounds, 960.0, 20.0).is_some());
+        assert!(cursor_edge_anchor(&bounds, 960.0, 1060.0).is_some());
+        assert!(cursor_edge_anchor(&bounds, 960.0, 540.0).is_none());
     }
 }
 
@@ -601,11 +701,16 @@ mod platform {
         }
     }
 
-    pub fn show_panel_at_logical_anchor(app_handle: &AppHandle, center_x: f64, bottom_y: f64) {
+    pub fn show_panel_at_logical_anchor(
+        app_handle: &AppHandle,
+        center_x: f64,
+        top_y: f64,
+        bottom_y: f64,
+    ) {
         if let Some(panel) = get_or_init_panel!(app_handle) {
-            position_panel_at_logical_anchor(app_handle, center_x, bottom_y);
+            position_panel_at_logical_anchor(app_handle, center_x, top_y, bottom_y);
             panel.show_and_make_key();
-            position_panel_at_logical_anchor(app_handle, center_x, bottom_y);
+            position_panel_at_logical_anchor(app_handle, center_x, top_y, bottom_y);
         }
     }
 
