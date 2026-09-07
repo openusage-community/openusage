@@ -8,6 +8,19 @@ const BARS_TRACK_OPACITY = 0.16
 const BARS_REMAINDER_OPACITY = 0.24
 const BARS_FILL_OPACITY = 1
 
+// Donut draws the provider logo beside the ring. Both cells are scaled below sizePx so the
+// composite stays compact, with a real gap so the glyphs never touch.
+const DONUT_CELL_RATIO = 0.72
+const DONUT_GAP_RATIO = 0.12
+
+function donutCellPx(sizePx: number): number {
+  return Math.max(6, Math.round(sizePx * DONUT_CELL_RATIO))
+}
+
+function donutGapPx(sizePx: number): number {
+  return Math.max(2, Math.round(sizePx * DONUT_GAP_RATIO))
+}
+
 function rgbaToImageDataBytes(rgba: Uint8ClampedArray): Uint8Array {
   // Image.new expects Uint8Array. Uint8ClampedArray shares the same buffer layout.
   return new Uint8Array(rgba.buffer)
@@ -164,21 +177,23 @@ function getSvgLayout(args: {
   const { sizePx, style, percentText } = args
   const hasPercentText = typeof percentText === "string" && percentText.length > 0
   const verticalNudgePx = 1
-  const pad = Math.max(1, Math.round(sizePx * 0.08)) // ~2px at 24–36px
-  const gap = Math.max(1, Math.round(sizePx * 0.03)) // ~1px at 36px
+  const pad = Math.max(1, Math.round(sizePx * 0.06)) // ~2px at 24–36px
+  // Bars are scaled down to the panel height, so a 1px gap ends up sub-pixel and the bars
+  // visually merge. Keep at least 2px here so they stay separated after downscaling.
+  const gap = Math.max(2, Math.round(sizePx * 0.08)) // ~3px at 36px
 
   const height = sizePx
   const barsX = pad
   const barsWidth = sizePx - 2 * pad
-  const fontSize = Math.max(9, Math.round(sizePx * 0.72))
+  const fontSize = Math.max(9, Math.round(sizePx * 0.48))
   const textWidth = hasPercentText ? estimateTextWidthPx(percentText, fontSize) : 0
   // Optical correction + global nudge down to align with the tray slot center.
   const textY = Math.round(sizePx / 2) + 1 + verticalNudgePx
 
   if (style === "donut") {
-    const donutGap = Math.max(1, Math.round(sizePx * 0.06))
+    const cell = donutCellPx(sizePx)
     return {
-      width: sizePx + donutGap + sizePx,
+      width: pad + cell + donutGapPx(sizePx) + cell + pad,
       height,
       pad,
       gap,
@@ -204,8 +219,8 @@ function getSvgLayout(args: {
     }
   }
 
-  const textGap = Math.max(2, Math.round(sizePx * 0.08))
-  const textAreaWidth = Math.max(20, Math.round(sizePx * 1.5), textWidth + pad)
+  const textGap = Math.max(2, Math.round(sizePx * 0.03))
+  const textAreaWidth = Math.max(14, textWidth + pad)
   const rightPad = pad
 
   return {
@@ -287,33 +302,28 @@ export function makeTrayBarsSvg(args: {
       )
     }
   } else if (style === "donut") {
-    const iconSize = Math.max(6, Math.round(sizePx - 2 * layout.pad * 0.5))
-    const iconX = layout.barsX
-    const iconY = Math.round((height - iconSize) / 2)
+    const cell = donutCellPx(sizePx)
     const href =
       typeof providerIconUrl === "string" ? themeSvgDataUrl(providerIconUrl.trim(), fg) : ""
+    const iconX = layout.pad
+    const iconY = Math.round((height - cell) / 2)
 
     if (href.length > 0) {
       parts.push(
-        `<image x="${iconX}" y="${iconY}" width="${iconSize}" height="${iconSize}" href="${escapeXmlText(href)}" preserveAspectRatio="xMidYMid meet" />`
+        `<image x="${iconX}" y="${iconY}" width="${cell}" height="${cell}" href="${escapeXmlText(href)}" preserveAspectRatio="xMidYMid meet" />`
       )
     } else {
-      const fcx = iconX + iconSize / 2
-      const fcy = iconY + iconSize / 2
-      const fallbackR = Math.max(2, iconSize / 2 - 1.5)
-      const fallbackSW = Math.max(1.5, Math.round(iconSize * 0.14))
+      const fallbackR = Math.max(2, cell / 2 - 1.5)
+      const fallbackSW = Math.max(1.5, Math.round(cell * 0.14))
       parts.push(
-        `<circle cx="${fcx}" cy="${fcy}" r="${fallbackR}" fill="none" stroke="${fg}" stroke-width="${fallbackSW}" opacity="1" shape-rendering="geometricPrecision" />`
+        `<circle cx="${iconX + cell / 2}" cy="${iconY + cell / 2}" r="${fallbackR}" fill="none" stroke="${fg}" stroke-width="${fallbackSW}" opacity="1" shape-rendering="geometricPrecision" />`
       )
     }
 
-    const donutGap = Math.max(1, Math.round(sizePx * 0.06))
-    const donutAreaX = sizePx + donutGap
-    const chartSize = Math.max(6, sizePx - 2 * layout.pad)
-    const cx = donutAreaX + layout.pad + chartSize / 2
-    const cy = height / 2 + 1
-    const strokeW = Math.max(2, Math.round(chartSize * 0.16))
-    const radius = Math.max(1, Math.floor(chartSize / 2 - strokeW / 2) + 0.5)
+    const cx = layout.pad + cell + donutGapPx(sizePx) + cell / 2
+    const cy = height / 2
+    const strokeW = Math.max(2, Math.round(cell * 0.16))
+    const radius = Math.max(1, Math.floor(cell / 2 - strokeW / 2) + 0.5)
 
     parts.push(
       `<circle cx="${cx}" cy="${cy}" r="${radius}" fill="none" stroke="${fg}" stroke-width="${strokeW}" opacity="${BARS_TRACK_OPACITY}" shape-rendering="geometricPrecision" />`
@@ -467,7 +477,13 @@ export async function renderTrayBarsIcon(args: {
     style,
     percentText: text,
   })
-  const canvasWidth = Math.max(layout.width, getStableTrayImageWidthPx(sizePx))
+  // Only "provider" needs a stabilized width (its percent text changes width, which
+  // would shift the tray anchor). "donut"/"bars" render no text, so their layout width
+  // is already constant — padding them to the provider width just makes them wide.
+  const canvasWidth =
+    style === "provider"
+      ? Math.max(layout.width, getStableTrayImageWidthPx(sizePx))
+      : layout.width
   const rgba = await rasterizeSvgToRgba({
     svg,
     svgWidthPx: layout.width,
