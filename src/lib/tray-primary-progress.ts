@@ -65,18 +65,21 @@ export function getTrayPrimaryBars(args: {
       const primaryLabel = meta.primaryCandidates.find((label) =>
         data.lines.some((line) => isProgressLine(line) && line.label === label)
       )
-      if (primaryLabel) {
-        const primaryLine = data.lines.find(
-          (line): line is ProgressLine =>
-            isProgressLine(line) && line.label === primaryLabel
-        )
-        if (primaryLine && primaryLine.limit > 0) {
-          const shownAmount =
-            displayMode === "used"
-              ? primaryLine.used
-              : primaryLine.limit - primaryLine.used
-          fraction = clamp01(shownAmount / primaryLine.limit)
-        }
+      // Some plans expose none of the declared candidates (usage-based Codex reports only
+      // "Credits", never "Session"). Fall back to the first progress line so the tray shows
+      // a real number instead of "--%".
+      const primaryLine = primaryLabel
+        ? data.lines.find(
+            (line): line is ProgressLine =>
+              isProgressLine(line) && line.label === primaryLabel
+          )
+        : data.lines.find((line): line is ProgressLine => isProgressLine(line))
+      if (primaryLine && primaryLine.limit > 0) {
+        const shownAmount =
+          displayMode === "used"
+            ? primaryLine.used
+            : primaryLine.limit - primaryLine.used
+        fraction = clamp01(shownAmount / primaryLine.limit)
       }
     }
 
